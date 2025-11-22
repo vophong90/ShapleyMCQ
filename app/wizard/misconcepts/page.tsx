@@ -101,6 +101,28 @@ export default function MisconceptWizard() {
     );
   }
 
+  // GPT REFINE MISCONCEPTION
+  async function refine(index: number) {
+    const item = miscons[index];
+
+    const res = await fetch("/api/miscon-refine", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: item.description,
+        error_type: item.error_type
+      })
+    });
+
+    const json = await res.json();
+
+    if (json.refined_description) {
+      updateItem(index, "description", json.refined_description);
+    } else {
+      alert("GPT không refine được.");
+    }
+  }
+
   // Save selected misconceptions
   async function saveMiscon() {
     if (!selectedAU) return;
@@ -109,11 +131,15 @@ export default function MisconceptWizard() {
     // Delete old → Insert new
     await supabase.from("misconceptions").delete().eq("au_id", selectedAU.id);
 
+    // Get current user ID
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+
     const rows = miscons
       .filter((m) => m.approved)
       .map((m) => ({
         au_id: selectedAU.id,
-        owner_id: (supabase as any).auth.getUser()?.id,
+        owner_id: userId,
         description: m.description,
         error_type: m.error_type,
       }));
@@ -188,6 +214,16 @@ export default function MisconceptWizard() {
                       updateItem(i, "description", e.target.value)
                     }
                   />
+
+                  {/* Refine Button */}
+                  <div className="flex justify-end mt-2">
+                    <button
+                      onClick={() => refine(i)}
+                      className="text-blue-600 hover:underline text-sm"
+                    >
+                      Refine by GPT
+                    </button>
+                  </div>
 
                   <div className="flex mt-3 gap-4 items-center">
                     <select
