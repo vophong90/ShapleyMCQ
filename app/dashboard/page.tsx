@@ -1,14 +1,84 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+
+type Profile = {
+  id: string;
+  email: string | null;
+  name: string | null;
+};
+
 export default function DashboardPage() {
-  // Sau này sẽ kiểm tra login, load data từ Supabase, v.v.
+  const router = useRouter();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function checkAuth() {
+      const {
+        data: { session }
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        router.push("/login");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, name")
+        .eq("id", session.user.id)
+        .single();
+
+      if (error) {
+        console.error(error);
+      } else {
+        setProfile(data);
+      }
+      setLoading(false);
+    }
+
+    checkAuth();
+  }, [router]);
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push("/");
+  }
+
+  if (loading) {
+    return (
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <p className="text-sm text-slate-600">Đang tải thông tin…</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-semibold text-slate-900 mb-2">
-        Dashboard
-      </h1>
-      <p className="text-sm text-slate-600 mb-6">
-        Đây sẽ là trung tâm điều khiển cho pipeline AU → Misconceptions → MCQ →
-        Monte Carlo → Shapley. Hiện tại mới là skeleton giao diện.
-      </p>
+    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900 mb-1">
+            Dashboard
+          </h1>
+          <p className="text-sm text-slate-600">
+            Xin chào{" "}
+            <span className="font-medium">
+              {profile?.name || profile?.email || "bạn"}
+            </span>
+            . Đây là trung tâm điều khiển cho pipeline AU → Misconceptions → MCQ
+            → Monte Carlo → Shapley.
+          </p>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs text-slate-700 hover:border-brand-500 hover:text-brand-700"
+        >
+          Đăng xuất
+        </button>
+      </div>
 
       <div className="grid md:grid-cols-3 gap-4">
         <div className="bg-white border rounded-2xl shadow-sm p-4">
@@ -18,9 +88,12 @@ export default function DashboardPage() {
           <p className="text-xs text-slate-600 mb-2">
             Chọn chuyên ngành, bậc học, Bloom, và LLO cho bài cần ra câu hỏi.
           </p>
-          <button className="mt-1 inline-flex px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-medium hover:bg-brand-700">
+          <a
+            href="/wizard/context"
+            className="mt-1 inline-flex px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-medium hover:bg-brand-700"
+          >
             Bắt đầu
-          </button>
+          </a>
         </div>
 
         <div className="bg-white border rounded-2xl shadow-sm p-4">
@@ -31,7 +104,7 @@ export default function DashboardPage() {
             Sinh và quản lý các Assessment Units và sai lầm thường gặp.
           </p>
           <button className="mt-1 inline-flex px-3 py-1.5 rounded-lg border border-slate-300 text-xs text-slate-700 hover:border-brand-500 hover:text-brand-700">
-            Quản lý AU
+            (Sẽ làm sau)
           </button>
         </div>
 
@@ -43,7 +116,7 @@ export default function DashboardPage() {
             Sinh câu MCQ, đánh giá theo chuẩn USMLE/NBME, Monte Carlo & Shapley.
           </p>
           <button className="mt-1 inline-flex px-3 py-1.5 rounded-lg border border-slate-300 text-xs text-slate-700 hover:border-brand-500 hover:text-brand-700">
-            Xem MCQ
+            (Sẽ làm sau)
           </button>
         </div>
       </div>
