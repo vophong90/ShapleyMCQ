@@ -20,6 +20,27 @@ type MCQ = {
   explanation: string;
 };
 
+type NbmeResult = {
+  hard_rules: {
+    passed: boolean;
+    flags: string[];
+  };
+  rubric: {
+    overall_score: number;
+    summary: string;
+    dimensions: {
+      stem_clarity?: { score: number; comment: string };
+      one_best_answer?: { score: number; comment: string };
+      distractor_quality?: { score: number; comment: string };
+      clinical_relevance?: { score: number; comment: string };
+      technical_flaws?: { score: number; comment: string };
+      [key: string]: any;
+    };
+    suggestions: string;
+    [key: string]: any;
+  };
+};
+
 export default function MCQWizard() {
   const [aus, setAus] = useState<AU[]>([]);
   const [selectedAU, setSelectedAU] = useState<AU | null>(null);
@@ -27,6 +48,9 @@ export default function MCQWizard() {
   const [mcq, setMcq] = useState<MCQ | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [nbmeResult, setNbmeResult] = useState<NbmeResult | null>(null);
+  const [nbmeLoading, setNbmeLoading] = useState(false);
 
   // Load AU list
   useEffect(() => {
@@ -50,12 +74,15 @@ export default function MCQWizard() {
 
     if (!error && data) {
       setMiscons(data);
+    } else {
+      setMiscons([]);
     }
   }
 
   function chooseAU(au: AU) {
     setSelectedAU(au);
     setMcq(null);
+    setNbmeResult(null);
     loadMiscons(au);
   }
 
@@ -64,6 +91,7 @@ export default function MCQWizard() {
     if (!selectedAU) return;
 
     setLoading(true);
+    setNbmeResult(null);
 
     const res = await fetch("/api/mcq-gen", {
       method: "POST",
@@ -73,8 +101,8 @@ export default function MCQWizard() {
         misconceptions: miscons,
         specialty_name: "Y học cổ truyền",
         learner_level: "Sinh viên đại học",
-        bloom_level: "Analyze"
-      })
+        bloom_level: "Analyze",
+      }),
     });
 
     const json = await res.json();
@@ -92,7 +120,7 @@ export default function MCQWizard() {
   function updateMCQ(key: keyof MCQ, value: any) {
     setMcq((prev: any) => ({
       ...prev,
-      [key]: value
+      [key]: value,
     }));
   }
 
@@ -104,8 +132,8 @@ export default function MCQWizard() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        stem: mcq.stem
-      })
+        stem: mcq.stem,
+      }),
     });
 
     const json = await res.json();
@@ -120,8 +148,8 @@ export default function MCQWizard() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        text: mcq.distractors[i]
-      })
+        text: mcq.distractors[i],
+      }),
     });
 
     const json = await res.json();
@@ -130,6 +158,28 @@ export default function MCQWizard() {
       arr[i] = json.refined;
       updateMCQ("distractors", arr);
     }
+  }
+
+  // NBME/USMLE STYLE CHECK
+  async function runNbmeCheck() {
+    if (!mcq) return;
+    setNbmeLoading(true);
+
+    const res = await fetch("/api/mcqs/nbme-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(mcq),
+    });
+
+    const json = await res.json();
+    setNbmeLoading(false);
+
+    if (json.error) {
+      alert(json.error);
+      return;
+    }
+
+    setNbmeResult(json);
   }
 
   // Save MCQ to DB
@@ -148,7 +198,7 @@ export default function MCQWizard() {
         owner_id: userId,
         stem: mcq.stem,
         correct_answer: mcq.correct_answer,
-        explanation: mcq.explanation
+        explanation: mcq.explanation,
       })
       .select("id")
       .single();
@@ -166,8 +216,8 @@ export default function MCQWizard() {
       ...mcq.distractors.map((d: string) => ({
         mcq_id: mcqId,
         text: d,
-        is_correct: false
-      }))
+        is_correct: false,
+      })),
     ];
 
     await supabase.from("mcq_options").insert(options);
@@ -178,7 +228,6 @@ export default function MCQWizard() {
 
   return (
     <div className="flex h-[calc(100vh-60px)] bg-gray-50">
-
       {/* LEFT PANEL */}
       <div className="w-80 border-r bg-white overflow-y-auto">
         <div className="p-4 text-lg font-semibold">Assessment Units</div>
@@ -197,7 +246,6 @@ export default function MCQWizard() {
 
       {/* MAIN PANEL */}
       <div className="flex-1 p-6 overflow-y-auto">
-
         {!selectedAU && (
           <div className="text-gray-500 text-center mt-20">
             Chọn một AU để bắt đầu tạo câu MCQ.
@@ -221,11 +269,10 @@ export default function MCQWizard() {
             {/* MCQ Viewer */}
             {mcq && (
               <div className="mt-6 space-y-6">
-
                 {/* STEM */}
                 <div className="bg-white p-4 rounded-xl shadow">
-                  <div className="flex justify-between">
-                    <h3 className="font-semibold mb-2">Stem</h3>
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="font-semibold">Stem</h3>
                     <button
                       onClick={refineStem}
                       className="text-blue-600 hover:underline text-sm"
@@ -260,8 +307,10 @@ export default function MCQWizard() {
 
                   {mcq.distractors.map((d, i) => (
                     <div key={i} className="mb-4">
-                      <div className="flex justify-between">
-                        <span className="font-medium">Distractor {i + 1}</span>
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium">
+                          Distractor {i + 1}
+                        </span>
                         <button
                           onClick={() => refineDistractor(i)}
                           className="text-blue-600 hover:underline text-sm"
@@ -290,8 +339,99 @@ export default function MCQWizard() {
                     className="w-full border p-2 rounded-lg"
                     rows={4}
                     value={mcq.explanation}
-                    onChange={(e) => updateMCQ("explanation", e.target.value)}
+                    onChange={(e) =>
+                      updateMCQ("explanation", e.target.value)
+                    }
                   />
+                </div>
+
+                {/* NBME / USMLE STYLE CHECKER */}
+                <div className="bg-white p-4 rounded-xl shadow space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-semibold">
+                      USMLE / NBME Style Checker
+                    </h3>
+                    <button
+                      onClick={runNbmeCheck}
+                      disabled={nbmeLoading}
+                      className="px-3 py-1 rounded-lg bg-purple-600 text-white text-sm hover:bg-purple-700"
+                    >
+                      {nbmeLoading
+                        ? "Đang đánh giá…"
+                        : "Chạy NBME Style Check"}
+                    </button>
+                  </div>
+
+                  {!nbmeResult && (
+                    <p className="text-sm text-gray-500">
+                      Bấm nút để đánh giá câu MCQ theo chuẩn NBME/USMLE (hard
+                      rules + GPT rubric).
+                    </p>
+                  )}
+
+                  {nbmeResult && (
+                    <div className="space-y-3 text-sm">
+                      {/* HARD RULES */}
+                      <div>
+                        <div className="font-semibold">
+                          Hard rules:{" "}
+                          {nbmeResult.hard_rules.passed ? (
+                            <span className="text-emerald-600">PASSED</span>
+                          ) : (
+                            <span className="text-red-600">FAILED</span>
+                          )}
+                        </div>
+                        {nbmeResult.hard_rules.flags.length > 0 && (
+                          <ul className="list-disc list-inside text-red-700 mt-1">
+                            {nbmeResult.hard_rules.flags.map((f, i) => (
+                              <li key={i}>{f}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+
+                      {/* RUBRIC */}
+                      <div>
+                        <div className="font-semibold">
+                          Overall score:{" "}
+                          <span className="text-blue-700">
+                            {nbmeResult.rubric.overall_score}/5
+                          </span>
+                        </div>
+                        <p className="mt-1 text-gray-700">
+                          {nbmeResult.rubric.summary}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2">
+                        {Object.entries(nbmeResult.rubric.dimensions || {}).map(
+                          ([key, value]: any) => (
+                            <div
+                              key={key}
+                              className="border rounded-lg p-2 bg-slate-50"
+                            >
+                              <div className="font-semibold">
+                                {key}{" "}
+                                <span className="text-sm text-blue-700">
+                                  ({value.score}/5)
+                                </span>
+                              </div>
+                              <div className="text-xs text-gray-700 mt-1">
+                                {value.comment}
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="font-semibold">Gợi ý chỉnh sửa:</div>
+                        <pre className="mt-1 text-xs whitespace-pre-wrap text-gray-700">
+                          {nbmeResult.rubric.suggestions}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
