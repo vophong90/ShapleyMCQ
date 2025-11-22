@@ -33,18 +33,28 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 </a>
                 <a
                   href="/dashboard"
+                  className="text-slate-600 hover:text-brand-600"
+                >
+                  Dashboard
+                </a>
+                <a
+                  href="/login"
+                  className="text-slate-600 hover:text-brand-600"
+                >
+                  Đăng nhập
+                </a>
+                <a
+                  href="/register"
                   className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-medium hover:bg-brand-700"
                 >
-                  Go to app
+                  Đăng ký
                 </a>
               </nav>
             </div>
           </header>
 
           {/* Main content */}
-          <main className="flex-1">
-            {children}
-          </main>
+          <main className="flex-1">{children}</main>
 
           {/* Footer */}
           <footer className="border-t bg-white">
