@@ -32,9 +32,23 @@ const BLOOM_LEVELS = [
   { value: "create", label: "Create – Sáng tạo" }
 ];
 
+type LloEvalItem = {
+  llo: string;
+  inferred_bloom: string;
+  bloom_match: "good" | "too_low" | "too_high" | string;
+  level_fit: "good" | "too_easy" | "too_hard" | string;
+  comments: string;
+};
+
+type LloEvalResult = {
+  overall_comment: string;
+  items: LloEvalItem[];
+};
+
 export default function ContextWizardPage() {
   const router = useRouter();
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const [specialtyName, setSpecialtyName] = useState<string | undefined>(undefined);
   const [state, setState] = useState<ContextState>({
     specialty_id: "",
     learner_level: "",
@@ -44,6 +58,10 @@ export default function ContextWizardPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const [evalResult, setEvalResult] = useState<LloEvalResult | null>(null);
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
 
   useEffect(() => {
     async function init() {
@@ -95,7 +113,6 @@ export default function ContextWizardPage() {
             // ignore
           }
         } else if (profile?.specialty_id) {
-          // Nếu chưa có context, dùng specialty mặc định từ profile
           setState((prev) => ({
             ...prev,
             specialty_id: profile.specialty_id
@@ -108,6 +125,13 @@ export default function ContextWizardPage() {
 
     init();
   }, [router]);
+
+  // Cập nhật specialtyName mỗi khi state.specialty_id hoặc specialties thay đổi
+  useEffect(() => {
+    if (!state.specialty_id || specialties.length === 0) return;
+    const spec = specialties.find((s) => s.id === state.specialty_id);
+    setSpecialtyName(spec?.name);
+  }, [state.specialty_id, specialties]);
 
   function handleChange<K extends keyof ContextState>(
     key: K,
@@ -139,7 +163,7 @@ export default function ContextWizardPage() {
     return true;
   }
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSave(e: FormEvent) {
     e.preventDefault();
     setMsg(null);
 
@@ -160,10 +184,111 @@ export default function ContextWizardPage() {
     );
     setSaving(false);
 
-    // Tạm thời quay về Dashboard, sau này sẽ điều hướng sang bước 2 cụ thể
     setTimeout(() => {
       router.push("/dashboard");
     }, 800);
+  }
+
+  async function handleEvaluate() {
+    setEvalError(null);
+    setEvalResult(null);
+    setMsg(null);
+
+    if (!validate()) {
+      return;
+    }
+
+    setEvalLoading(true);
+
+    try {
+      const res = await fetch("/api/llo-eval", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          specialty_name: specialtyName,
+          learner_level: state.learner_level,
+          bloom_level: state.bloom_level,
+          llos_text: state.llos_text
+        })
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        setEvalError(
+          errorBody?.error || "Không đánh giá được LLO. Vui lòng thử lại."
+        );
+        setEvalLoading(false);
+        return;
+      }
+
+      const data = (await res.json()) as LloEvalResult;
+      setEvalResult(data);
+      setEvalLoading(false);
+    } catch (e: any) {
+      console.error(e);
+      setEvalError("Lỗi mạng hoặc server. Vui lòng thử lại.");
+      setEvalLoading(false);
+    }
+  }
+
+  function renderBadgeBloomMatch(m: string) {
+    switch (m) {
+      case "good":
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            Bloom phù hợp
+          </span>
+        );
+      case "too_low":
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+            Bloom mục tiêu cao hơn LLO
+          </span>
+        );
+      case "too_high":
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+            Bloom mục tiêu thấp hơn LLO
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-600 border border-slate-200">
+            Bloom: {m}
+          </span>
+        );
+    }
+  }
+
+  function renderBadgeLevelFit(m: string) {
+    switch (m) {
+      case "good":
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            Phù hợp bậc học
+          </span>
+        );
+      case "too_easy":
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+            Quá dễ so với bậc học
+          </span>
+        );
+      case "too_hard":
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+            Quá khó so với bậc học
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-600 border border-slate-200">
+            Level: {m}
+          </span>
+        );
+    }
   }
 
   if (loading) {
@@ -175,18 +300,20 @@ export default function ContextWizardPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
-      <h1 className="text-xl md:text-2xl font-semibold text-slate-900 mb-2">
-        Bước 1 – Thiết lập bối cảnh câu hỏi
-      </h1>
-      <p className="text-sm text-slate-600 mb-6">
-        Chọn chuyên ngành, bậc đào tạo, mức Bloom và LLO của bài cần ra câu hỏi.
-        Thông tin này sẽ được dùng để GPT đánh giá sự phù hợp của LLO với thang
-        Bloom & bậc học, và làm nền cho các bước AU → Misconceptions → MCQ.
-      </p>
+    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+      <div>
+        <h1 className="text-xl md:text-2xl font-semibold text-slate-900 mb-2">
+          Bước 1 – Thiết lập bối cảnh câu hỏi
+        </h1>
+        <p className="text-sm text-slate-600">
+          Chọn chuyên ngành, bậc đào tạo, mức Bloom và LLO của bài cần ra câu hỏi.
+          Sau đó dùng GPT để đánh giá sự phù hợp của LLO với thang Bloom & bậc
+          học, trước khi đi tiếp sang bước AU & Misconceptions.
+        </p>
+      </div>
 
       <form
-        onSubmit={handleSubmit}
+        onSubmit={handleSave}
         className="bg-white border rounded-2xl shadow-sm p-5 space-y-5"
       >
         {/* Specialty */}
@@ -288,23 +415,81 @@ export default function ContextWizardPage() {
           </div>
         )}
 
-        <div className="flex justify-end gap-3 pt-2">
+        <div className="flex flex-wrap justify-between items-center gap-3 pt-2">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard")}
+              className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-700 hover:border-brand-400 hover:text-brand-700"
+            >
+              Quay lại Dashboard
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
+            >
+              {saving ? "Đang lưu…" : "Lưu bối cảnh (Bước 1)"}
+            </button>
+          </div>
+
           <button
             type="button"
-            onClick={() => router.push("/dashboard")}
-            className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-700 hover:border-brand-400 hover:text-brand-700"
+            onClick={handleEvaluate}
+            disabled={evalLoading}
+            className="px-4 py-2 rounded-xl border border-brand-500 text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 disabled:opacity-60"
           >
-            Quay lại Dashboard
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
-          >
-            {saving ? "Đang lưu…" : "Lưu bối cảnh (Bước 1)"}
+            {evalLoading
+              ? "Đang đánh giá LLO…"
+              : "Đánh giá LLO & Bloom & bậc học (GPT)"}
           </button>
         </div>
       </form>
+
+      {/* Kết quả đánh giá LLO */}
+      {evalError && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl px-4 py-3">
+          {evalError}
+        </div>
+      )}
+
+      {evalResult && (
+        <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
+          <div>
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+              Kết quả đánh giá LLO
+            </div>
+            <p className="text-sm text-slate-700">
+              {evalResult.overall_comment}
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            {evalResult.items?.map((item, idx) => (
+              <div
+                key={idx}
+                className="border border-slate-100 rounded-xl px-3 py-2.5 bg-slate-50/60"
+              >
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="text-xs font-medium text-slate-800">
+                    {item.llo}
+                  </div>
+                  <div className="flex flex-wrap gap-1 justify-end">
+                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-900 text-slate-50">
+                      Bloom thực tế: {item.inferred_bloom}
+                    </span>
+                    {renderBadgeBloomMatch(item.bloom_match)}
+                    {renderBadgeLevelFit(item.level_fit)}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-600">
+                  {item.comments}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
