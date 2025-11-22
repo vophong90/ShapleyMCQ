@@ -41,6 +41,19 @@ type NbmeResult = {
   };
 };
 
+type EduFitResult = {
+  inferred_bloom: string;
+  bloom_match: string;   // "good" | "too_low" | "too_high"
+  level_fit: string;     // "good" | "too_easy" | "too_hard"
+  summary: string;
+  llo_coverage: {
+    llo: string;
+    coverage: string;    // "direct" | "indirect" | "none"
+    comment: string;
+  }[];
+  recommendations: string[];
+};
+
 export default function MCQWizard() {
   const [aus, setAus] = useState<AU[]>([]);
   const [selectedAU, setSelectedAU] = useState<AU | null>(null);
@@ -51,10 +64,25 @@ export default function MCQWizard() {
 
   const [nbmeResult, setNbmeResult] = useState<NbmeResult | null>(null);
   const [nbmeLoading, setNbmeLoading] = useState(false);
+  const [context, setContext] = useState<any | null>(null);
+  const [eduFitResult, setEduFitResult] = useState<EduFitResult | null>(null);
+  const [eduLoading, setEduLoading] = useState(false);
+
 
   // Load AU list
   useEffect(() => {
     loadAUs();
+    // Lấy context từ bước 1 (đã lưu ở localStorage)
+    const saved = typeof window !== "undefined"
+      ? localStorage.getItem("shapleymcq_context")
+      : null;
+    if (saved) {
+      try {
+        setContext(JSON.parse(saved));
+      } catch {
+        // ignore
+      }
+    }
   }, []);
 
   async function loadAUs() {
@@ -180,6 +208,38 @@ export default function MCQWizard() {
     }
 
     setNbmeResult(json);
+  }
+
+    // EDUCATIONAL FIT CHECK
+  async function runEduFitCheck() {
+    if (!mcq || !context) return;
+    setEduLoading(true);
+    setEduFitResult(null);
+
+    const res = await fetch("/api/mcqs/edu-fit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stem: mcq.stem,
+        correct_answer: mcq.correct_answer,
+        distractors: mcq.distractors,
+        explanation: mcq.explanation,
+        learner_level: context.learner_level,
+        bloom_level: context.bloom_level,
+        llos_text: context.llos_text,
+        specialty_name: context.specialty_name,
+      }),
+    });
+
+    const json = await res.json();
+    setEduLoading(false);
+
+    if (json.error) {
+      alert(json.error);
+      return;
+    }
+
+    setEduFitResult(json);
   }
 
   // Save MCQ to DB
@@ -438,6 +498,111 @@ export default function MCQWizard() {
           </>
         )}
       </div>
+
+                      {/* EDUCATIONAL FIT CHECKER */}
+                <div className="bg-white p-4 rounded-xl shadow space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-semibold">
+                      Educational Fit Checker
+                    </h3>
+                    <button
+                      onClick={runEduFitCheck}
+                      disabled={eduLoading || !context}
+                      className="px-3 py-1 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {eduLoading
+                        ? "Đang đánh giá…"
+                        : "Check Bloom ↔ Bậc học ↔ LLO"}
+                    </button>
+                  </div>
+
+                  {!eduFitResult && (
+                    <p className="text-sm text-gray-500">
+                      Dùng để kiểm tra xem câu MCQ này có phù hợp với mức Bloom,
+                      bậc đào tạo và LLOs của bài hay không.
+                    </p>
+                  )}
+
+                  {eduFitResult && (
+                    <div className="space-y-3 text-sm">
+                      <div>
+                        <div className="font-semibold">
+                          Mức Bloom suy luận:{" "}
+                          <span className="text-blue-700">
+                            {eduFitResult.inferred_bloom}
+                          </span>
+                        </div>
+                        <div className="mt-1">
+                          So với Bloom mục tiêu:{" "}
+                          <span className="font-semibold">
+                            {eduFitResult.bloom_match === "good"
+                              ? "Phù hợp"
+                              : eduFitResult.bloom_match === "too_low"
+                              ? "Thấp hơn mục tiêu"
+                              : eduFitResult.bloom_match === "too_high"
+                              ? "Cao hơn mục tiêu"
+                              : eduFitResult.bloom_match}
+                          </span>
+                        </div>
+                        <div>
+                          Phù hợp với bậc học:{" "}
+                          <span className="font-semibold">
+                            {eduFitResult.level_fit === "good"
+                              ? "Phù hợp"
+                              : eduFitResult.level_fit === "too_easy"
+                              ? "Quá dễ"
+                              : eduFitResult.level_fit === "too_hard"
+                              ? "Quá khó"
+                              : eduFitResult.level_fit}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="font-semibold mb-1">
+                          Tóm tắt:
+                        </div>
+                        <p className="text-gray-700">
+                          {eduFitResult.summary}
+                        </p>
+                      </div>
+
+                      <div>
+                        <div className="font-semibold mb-1">
+                          LLO coverage:
+                        </div>
+                        <div className="space-y-1 max-h-48 overflow-y-auto border rounded-md p-2 bg-slate-50">
+                          {eduFitResult.llo_coverage.map((c, i) => (
+                            <div key={i} className="text-xs">
+                              <div className="font-semibold">
+                                • {c.llo}
+                              </div>
+                              <div>
+                                Coverage:{" "}
+                                <span className="italic">
+                                  {c.coverage}
+                                </span>
+                                {" – "}
+                                {c.comment}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="font-semibold mb-1">
+                          Gợi ý chỉnh sửa:
+                        </div>
+                        <ul className="list-disc list-inside text-xs text-gray-700">
+                          {eduFitResult.recommendations.map((r, i) => (
+                            <li key={i}>{r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
       {/* RIGHT PANEL */}
       {selectedAU && (
