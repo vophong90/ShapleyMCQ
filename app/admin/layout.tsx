@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -9,7 +11,8 @@ function NavLink({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const active = pathname.startsWith(href);
+  const active = pathname ? pathname.startsWith(href) : false;
+
   return (
     <Link
       href={href}
@@ -41,7 +44,7 @@ export default function AdminLayout({
             <nav className="flex items-center gap-2">
               <NavLink href="/admin/users">Users</NavLink>
               <NavLink href="/admin/items">MCQ Bank</NavLink>
-              <NavLink href="/admin/blueprints">Blueprint & Export</NavLink>
+              <NavLink href="/admin/blueprints">Blueprint &amp; Export</NavLink>
             </nav>
           </div>
           <div className="text-xs text-slate-500">
