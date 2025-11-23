@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Brand tokens giống CBME Atlas */
+:root {
+  --brand-primary: #0ea44b;
+  --brand-secondary: #f5c518;
+  --brand-accent: #0ea5e9;
+}
+
+/* Base style */
+body {
+  @apply bg-white text-slate-900 antialiased;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+/* Một số helper class dùng chung */
+.card {
+  @apply bg-white rounded-2xl shadow-soft p-6 border border-slate-100;
+}
+
+.stat {
+  @apply p-4 rounded-xl border;
+}
