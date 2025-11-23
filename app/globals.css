@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+body {
+  background: #fee2e2; /* hồng nhạt test */
+}
+
 /* Brand tokens giống CBME Atlas */
 :root {
   --brand-primary: #0ea44b;
