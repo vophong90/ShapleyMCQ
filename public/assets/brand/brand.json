@@ -1,0 +1,11 @@
+{
+  "name": "ShapleyMCQ Lab",
+  "colors": {
+    "primary": "#0ea44b",
+    "secondary": "#f5c518",
+    "accent": "#0ea5e9",
+    "neutral": "#111827",
+    "muted": "#6b7280",
+    "background": "#ffffff"
+  }
+}
