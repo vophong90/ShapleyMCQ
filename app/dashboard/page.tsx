@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+
 import Sparkline from "@/components/charts/Sparkline";
 import BarMini from "@/components/charts/BarMini";
 import DonutMini from "@/components/charts/DonutMini";
@@ -12,24 +14,50 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function load() {
-      const token = (await fetch("/api/auth/session")).headers.get(
-        "Authorization"
-      );
+      // 1) Lấy access_token từ Supabase client
+      const { data: { session } } = await supabase.auth.getSession();
 
-      const res1 = await fetch("/api/dashboard/stats", {
-        headers: { Authorization: token ?? "" },
+      if (!session?.access_token) {
+        console.error("Không có session Supabase");
+        setLoading(false);
+        return;
+      }
+
+      const accessToken = session.access_token;
+
+      // 2) Gửi token lên API /auth/session để lấy user_id
+      const r = await fetch("/api/auth/session", {
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
+
+      if (!r.ok) {
+        console.error("Auth session lỗi");
+        setLoading(false);
+        return;
+      }
+
+      // API trả về userId dưới dạng header Authorization: Bearer <user_id>
+      const userHeader = r.headers.get("Authorization") ?? "";
+
+      // 3) Lấy STATS
+      const res1 = await fetch("/api/dashboard/stats", {
+        headers: { Authorization: userHeader },
+      });
+
       const statsJson = await res1.json();
 
+      // 4) Lấy PROJECTS
       const res2 = await fetch("/api/dashboard/projects?page=1&limit=5", {
-        headers: { Authorization: token ?? "" },
+        headers: { Authorization: userHeader },
       });
+
       const projJson = await res2.json();
 
       setStats(statsJson);
-      setProjects(projJson.data ?? []);
+      setProjects(projJson.items ?? []);   // items mới đúng!
       setLoading(false);
     }
+
     load();
   }, []);
 
@@ -40,7 +68,7 @@ export default function DashboardPage() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
 
-      {/* HÀNG KPI */}
+      {/* ======= HÀNG KPI ========= */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <KpiCard label="Học phần" value={stats.courseCount} />
         <KpiCard label="Bài học" value={stats.lessonCount} />
@@ -58,7 +86,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* HÀNG MODULES */}
+      {/* ======= HÀNG MODULES ========= */}
       <div className="grid md:grid-cols-3 gap-4">
         <ModuleCard
           title="1. LLO & Context"
@@ -81,7 +109,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* PROJECTS */}
+      {/* ======= PROJECTS ========= */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900 mb-2">
           Các dự án MCQ gần đây
@@ -102,13 +130,14 @@ export default function DashboardPage() {
                   <th></th>
                 </tr>
               </thead>
+
               <tbody>
                 {projects.map((p) => (
                   <tr key={p.id} className="border-b">
                     <td className="py-2">{p.title}</td>
                     <td className="py-2">{p.courses?.title ?? "-"}</td>
                     <td className="py-2">{p.lessons?.title ?? "-"}</td>
-                    <td className="py-2">{p.progress}%</td>
+                    <td className="py-2">{p.progress ?? 0}%</td>
                     <td className="py-2">
                       {new Date(p.updated_at).toLocaleDateString("vi-VN")}
                     </td>
@@ -131,6 +160,10 @@ export default function DashboardPage() {
   );
 }
 
+
+/* ======================================
+   COMPONENTS
+======================================= */
 function KpiCard({
   label,
   value,
