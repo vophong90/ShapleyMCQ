@@ -1,51 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminClient } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const supabase = getAdminClient();
+  try {
+    const supabase = getSupabaseAdmin();
 
-  const auth = req.headers.get("Authorization");
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const userId = authHeader.replace("Bearer ", "").trim();
+    if (!userId) {
+      return NextResponse.json({ error: "Invalid user" }, { status: 401 });
+    }
+
+    // Pagination
+    const page = Number(req.nextUrl.searchParams.get("page") || 1);
+    const pageSize = 20;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, count, error } = await supabase
+      .from("mcq_items")
+      .select("id, stem, created_at, course_id, au_id", { count: "exact" })
+      .eq("owner_id", userId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    return NextResponse.json({
+      ok: true,
+      page,
+      total: count ?? 0,
+      items: data ?? [],
+    });
+  } catch (err) {
+    console.error("Error /api/dashboard/projects:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser(auth.replace("Bearer ", ""));
-
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const userId = user.id;
-
-  const searchParams = req.nextUrl.searchParams;
-  const page = Number(searchParams.get("page") ?? 1);
-  const limit = Number(searchParams.get("limit") ?? 10);
-  const from = (page - 1) * limit;
-  const to = from + limit - 1;
-
-  const { data, error } = await supabase
-    .from("mcq_projects")
-    .select(
-      `
-      id,
-      title,
-      step,
-      progress,
-      updated_at,
-      courses(title),
-      lessons(title)
-    `
-    )
-    .eq("owner_id", userId)
-    .order("updated_at", { ascending: false })
-    .range(from, to);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
-  }
-
-  return NextResponse.json({ data, page, limit });
 }
