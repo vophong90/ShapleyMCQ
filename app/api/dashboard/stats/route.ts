@@ -1,77 +1,63 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminClient } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const supabase = getAdminClient();
+  try {
+    const supabase = getSupabaseAdmin();
 
-  // Lấy user từ header Authorization
-  const auth = req.headers.get("Authorization");
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const userId = authHeader.replace("Bearer ", "").trim();
+    if (!userId) {
+      return NextResponse.json({ error: "Invalid user" }, { status: 401 });
+    }
+
+    // COUNT KPIs
+    const [{ count: courseCount }, { count: lessonCount }, { count: lloCount }, { count: auCount }, { count: misCount }, { count: mcqCount }] =
+      await Promise.all([
+        supabase.from("courses").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+        supabase.from("lessons").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+        supabase.from("llos").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+        supabase.from("assessment_units").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+        supabase.from("misconceptions").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+        supabase.from("mcq_items").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      ]);
+
+    // Mini chart: MCQ created last 7 days
+    const { data: mcqLast7 } = await supabase
+      .from("mcq_items")
+      .select("id, created_at")
+      .eq("owner_id", userId)
+      .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
+      .order("created_at", { ascending: true });
+
+    const mcqMini = (mcqLast7 || []).map((d) => ({
+      date: d.created_at,
+      value: 1,
+    }));
+
+    return NextResponse.json({
+      ok: true,
+      kpi: {
+        courses: courseCount ?? 0,
+        lessons: lessonCount ?? 0,
+        llos: lloCount ?? 0,
+        aus: auCount ?? 0,
+        misconceptions: misCount ?? 0,
+        mcqs: mcqCount ?? 0,
+      },
+      miniCharts: {
+        mcqLastWeek: mcqMini,
+      },
+    });
+  } catch (err) {
+    console.error("Error /api/dashboard/stats:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser(auth.replace("Bearer ", ""));
-
-  if (userErr || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const userId = user.id;
-
-  // Helper KPI function
-  async function kpi(table: string) {
-    const { count } = await supabase
-      .from(table)
-      .select("*", { head: true, count: "exact" })
-      .eq("owner_id", userId);
-    return count ?? 0;
-  }
-
-  // KPI Values
-  const [courseCount, lessonCount, lloCount, auCount, misCount, mcqCount] =
-    await Promise.all([
-      kpi("courses"),
-      kpi("lessons"),
-      kpi("llos"),
-      kpi("assessment_units"),
-      kpi("misconceptions"),
-      kpi("mcq_items"),
-    ]);
-
-  // Sparkline MCQ (7 ngày)
-  const { data: sparklineMcq } = await supabase.rpc("dashboard_mcq_sparkline", {
-    uid: userId,
-  });
-
-  // Histogram LLO by Bloom
-  const { data: bloomLlo } = await supabase
-    .from("llos")
-    .select("bloom_suggested, count:count(*)")
-    .eq("owner_id", userId)
-    .group("bloom_suggested");
-
-  // Histogram MCQ by Bloom
-  const { data: bloomMcq } = await supabase
-    .from("mcq_items")
-    .select("bloom_level, count:count(*)")
-    .eq("owner_id", userId)
-    .group("bloom_level");
-
-  return NextResponse.json({
-    courseCount,
-    lessonCount,
-    lloCount,
-    auCount,
-    misCount,
-    mcqCount,
-    sparklineMcq: sparklineMcq ?? [],
-    bloomLlo: bloomLlo ?? [],
-    bloomMcq: bloomMcq ?? [],
-  });
 }
