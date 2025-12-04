@@ -23,6 +23,30 @@ type GeneratedAU = {
   selected: boolean;
 };
 
+type Course = {
+  id: string;
+  title: string;
+};
+
+type Lesson = {
+  id: string;
+  title: string;
+  course_id: string;
+};
+
+type SavedAU = {
+  id: string;
+  core_statement: string;
+  short_explanation?: string | null;
+  bloom_min?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+};
+
+function normalizeCore(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 export default function AUPage() {
   const router = useRouter();
 
@@ -36,6 +60,13 @@ export default function AUPage() {
 
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // NEW: userId + courses/lessons + AU đã lưu
+  const [userId, setUserId] = useState<string | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [savedAus, setSavedAus] = useState<SavedAU[]>([]);
+  const [loadingSaved, setLoadingSaved] = useState(false);
 
   // Load context từ localStorage
   useEffect(() => {
@@ -58,6 +89,159 @@ export default function AUPage() {
     }
   }, [router]);
 
+  // NEW: lấy session để có userId
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSession() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (cancelled) return;
+      if (!session) return; // nếu chưa login thì các hành động save sẽ tự redirect sau
+      setUserId(session.user.id);
+    }
+    loadSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // NEW: load danh sách Học phần của user
+  useEffect(() => {
+    if (!userId) return;
+
+    let cancelled = false;
+
+    async function loadCourses() {
+      const { data, error } = await supabase
+        .from("courses")
+        .select("id, title")
+        .eq("owner_id", userId)
+        .order("title", { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Load courses error:", error);
+        return;
+      }
+      setCourses(data ?? []);
+    }
+
+    loadCourses();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  // NEW: load Lessons khi chọn course
+  useEffect(() => {
+    if (!userId || !context?.course_id) {
+      setLessons([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadLessons() {
+      const { data, error } = await supabase
+        .from("lessons")
+        .select("id, title, course_id")
+        .eq("owner_id", userId)
+        .eq("course_id", context.course_id!)
+        .order("order_in_course", { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Load lessons error:", error);
+        return;
+      }
+      setLessons(data ?? []);
+    }
+
+    loadLessons();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, context?.course_id]);
+
+  // NEW: load AU đã lưu cho course + lesson hiện tại
+  useEffect(() => {
+    if (!userId || !context?.course_id || !context.lesson_id) {
+      setSavedAus([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadSavedAus() {
+      setLoadingSaved(true);
+      const { data, error } = await supabase
+        .from("assessment_units")
+        .select(
+          "id, core_statement, short_explanation, bloom_min, status, created_at"
+        )
+        .eq("owner_id", userId)
+        .eq("course_id", context.course_id!)
+        .eq("lesson_id", context.lesson_id!)
+        .order("created_at", { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Load saved AUs error:", error);
+        setLoadingSaved(false);
+        return;
+      }
+      setSavedAus(data ?? []);
+      setLoadingSaved(false);
+    }
+
+    loadSavedAus();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, context?.course_id, context?.lesson_id]);
+
+  function persistContext(next: WizardContext) {
+    setContext(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("shapleymcq_context", JSON.stringify(next));
+    }
+  }
+
+  // --- chọn lại Học phần / Bài học ---
+  function handleChangeCourse(e: ChangeEvent<HTMLSelectElement>) {
+    const courseId = e.target.value || undefined;
+    const course = courses.find((c) => c.id === courseId);
+    if (!context) return;
+    const updated: WizardContext = {
+      ...context,
+      course_id: courseId,
+      course_title: course?.title,
+      // reset lesson khi đổi học phần
+      lesson_id: undefined,
+      lesson_title: undefined,
+    };
+    persistContext(updated);
+    // reset AU tạm & AU đã lưu (sẽ reload bằng effect)
+    setAus([]);
+    setSavedAus([]);
+  }
+
+  function handleChangeLesson(e: ChangeEvent<HTMLSelectElement>) {
+    const lessonId = e.target.value || undefined;
+    const lesson = lessons.find((l) => l.id === lessonId);
+    if (!context) return;
+    const updated: WizardContext = {
+      ...context,
+      lesson_id: lessonId,
+      lesson_title: lesson?.title,
+    };
+    persistContext(updated);
+    // reset AU tạm & AU đã lưu (sẽ reload bằng effect)
+    setAus([]);
+    setSavedAus([]);
+  }
+
   function handleFilesChange(e: ChangeEvent<HTMLInputElement>) {
     const fileList = e.target.files;
     if (!fileList) return;
@@ -77,6 +261,10 @@ export default function AUPage() {
     }
     if (!context.llos_text || !context.llos_text.trim()) {
       setError("Thiếu LLO. Vui lòng quay lại Bước 1 để nhập LLO.");
+      return;
+    }
+    if (!context.course_id || !context.lesson_id) {
+      setError("Vui lòng chọn Học phần và Bài học trước khi sinh AU.");
       return;
     }
 
@@ -120,23 +308,38 @@ export default function AUPage() {
 
       const rawAus = Array.isArray(data.aus) ? data.aus : [];
 
-      const mapped: GeneratedAU[] = rawAus
-        .map((au: any) => ({
-          core_statement: au.core_statement ?? au.text ?? "",
+      // NEW: bộ key để chống trùng với AU đã lưu + AU mới
+      const existingKeys = new Set<string>();
+      savedAus.forEach((a) => {
+        existingKeys.add(normalizeCore(a.core_statement || ""));
+      });
+
+      const mapped: GeneratedAU[] = [];
+      for (const au of rawAus) {
+        const core = (au.core_statement ?? au.text ?? "").toString();
+        const norm = normalizeCore(core);
+        if (!core.trim()) continue;
+        if (existingKeys.has(norm)) {
+          // bỏ AU trùng với AU cũ đã lưu
+          continue;
+        }
+        existingKeys.add(norm);
+        mapped.push({
+          core_statement: core,
           short_explanation: au.short_explanation ?? null,
           bloom_min: au.bloom_min ?? null,
           selected: true,
-        }))
-        .filter((au: GeneratedAU) => au.core_statement.trim() !== "");
+        });
+      }
 
       if (mapped.length === 0) {
         setError(
-          "GPT không sinh được AU nào. Vui lòng kiểm tra lại LLO hoặc tài liệu."
+          "GPT không sinh được AU mới (có thể trùng với AU đã có). Vui lòng kiểm tra lại LLO hoặc tài liệu."
         );
       } else {
         setAus(mapped);
         setMsg(
-          `Đã sinh được ${mapped.length} AU. Bạn có thể chọn/bỏ chọn trước khi lưu.`
+          `Đã sinh được ${mapped.length} AU mới (không trùng với AU đã lưu). Bạn có thể chọn/bỏ chọn trước khi lưu.`
         );
       }
 
@@ -213,6 +416,20 @@ export default function AUPage() {
       setMsg("Đã lưu AU được chọn. Chuyển sang bước Misconceptions…");
       setSaveLoading(false);
 
+      // reload AU đã lưu cho course/lesson hiện tại
+      if (userId && context.course_id && context.lesson_id) {
+        const { data } = await supabase
+          .from("assessment_units")
+          .select(
+            "id, core_statement, short_explanation, bloom_min, status, created_at"
+          )
+          .eq("owner_id", userId)
+          .eq("course_id", context.course_id!)
+          .eq("lesson_id", context.lesson_id!)
+          .order("created_at", { ascending: true });
+        setSavedAus(data ?? []);
+      }
+
       setTimeout(() => {
         router.push("/wizard/misconcepts");
       }, 900);
@@ -273,6 +490,58 @@ export default function AUPage() {
         </button>
       </div>
 
+      {/* NEW: Card chọn Học phần / Bài học */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
+        <div className="text-xs font-semibold text-slate-700">
+          Chọn Học phần &amp; Bài học làm bối cảnh sinh AU
+        </div>
+        <div className="grid md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              Học phần
+            </label>
+            <select
+              value={context.course_id ?? ""}
+              onChange={handleChangeCourse}
+              className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+            >
+              <option value="">-- Chọn Học phần --</option>
+              {courses.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              Bài học
+            </label>
+            <select
+              value={context.lesson_id ?? ""}
+              onChange={handleChangeLesson}
+              disabled={!context.course_id}
+              className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 disabled:bg-slate-50"
+            >
+              <option value="">
+                {context.course_id
+                  ? "-- Chọn Bài học --"
+                  : "Chọn Học phần trước"}
+              </option>
+              {lessons.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-1">
+          Bạn có thể đổi Học phần/Bài học bất kỳ lúc nào. AU đã lưu sẽ hiện bên
+          dưới tương ứng với lựa chọn hiện tại.
+        </p>
+      </div>
+
       {/* Card: Thông tin bối cảnh + LLO */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
         <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-600">
@@ -306,7 +575,6 @@ export default function AUPage() {
           <div className="text-xs font-semibold text-slate-700 mb-1">
             LLO của bài học:
           </div>
-          {/* CHỖ NÀY ĐÃ CHỈNH FONT */}
           <pre
             className="font-sans text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 
                        max-h-40 overflow-auto whitespace-pre-wrap leading-relaxed"
@@ -399,16 +667,81 @@ export default function AUPage() {
         </div>
       )}
 
-      {/* Kết quả AU sinh ra */}
+      {/* NEW: AU đã lưu trước đó */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              AU đã lưu cho Học phần/Bài học hiện tại
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Đây là các AU đã sinh và lưu trước đó, dùng cho Misconceptions &amp;
+              MCQ. Bạn vẫn có thể sinh thêm AU mới ở bên trên.
+            </p>
+          </div>
+          <div className="text-[11px] text-slate-500">
+            Tổng:{" "}
+            <span className="font-semibold text-slate-800">
+              {savedAus.length}
+            </span>{" "}
+            AU
+          </div>
+        </div>
+
+        {loadingSaved ? (
+          <p className="text-xs text-slate-500">Đang tải AU đã lưu…</p>
+        ) : savedAus.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            Chưa có AU nào được lưu cho Học phần/Bài học này.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {savedAus.map((au) => (
+              <div
+                key={au.id}
+                className="border border-slate-200 bg-slate-50 rounded-xl px-3.5 py-2.5 text-xs"
+              >
+                <div className="flex justify-between gap-3">
+                  <div className="flex-1">
+                    <div className="font-medium text-slate-900">
+                      {au.core_statement}
+                    </div>
+                    {au.short_explanation && (
+                      <p className="mt-0.5 text-[11px] text-slate-600">
+                        {au.short_explanation}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    {au.bloom_min && (
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-900 text-slate-50">
+                        Bloom tối thiểu: {au.bloom_min}
+                      </span>
+                    )}
+                    {au.status && (
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-600">
+                        Trạng thái: {au.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Kết quả AU mới sinh ra */}
       {aus.length > 0 && (
         <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                Các AU sinh ra từ GPT
+                Các AU sinh mới từ GPT
               </div>
               <p className="text-xs text-slate-600 mt-0.5">
-                Bạn có thể bỏ chọn những AU không phù hợp trước khi lưu.
+                Chỉ hiển thị những AU không trùng với AU đã lưu trước đó. Bạn có
+                thể bỏ chọn những AU không phù hợp trước khi lưu.
               </p>
             </div>
             <div className="text-[11px] text-slate-500">
