@@ -88,11 +88,16 @@ export default function AUPage() {
     try {
       const formData = new FormData();
       formData.append("llos_text", context.llos_text);
-      if (context.learner_level) formData.append("learner_level", context.learner_level);
-      if (context.bloom_level) formData.append("bloom_level", context.bloom_level);
-      if (context.specialty_name) formData.append("specialty_name", context.specialty_name);
-      if (context.course_title) formData.append("course_title", context.course_title);
-      if (context.lesson_title) formData.append("lesson_title", context.lesson_title);
+      if (context.learner_level)
+        formData.append("learner_level", context.learner_level);
+      if (context.bloom_level)
+        formData.append("bloom_level", context.bloom_level);
+      if (context.specialty_name)
+        formData.append("specialty_name", context.specialty_name);
+      if (context.course_title)
+        formData.append("course_title", context.course_title);
+      if (context.lesson_title)
+        formData.append("lesson_title", context.lesson_title);
 
       // Gửi kèm toàn bộ files (không lưu, chỉ dùng trong phiên)
       for (const file of files) {
@@ -101,7 +106,7 @@ export default function AUPage() {
 
       const res = await fetch("/api/au-gen", {
         method: "POST",
-        body: formData
+        body: formData,
       });
 
       const data = await res.json().catch(() => ({}));
@@ -115,18 +120,24 @@ export default function AUPage() {
 
       const rawAus = Array.isArray(data.aus) ? data.aus : [];
 
-      const mapped: GeneratedAU[] = rawAus.map((au: any) => ({
-        core_statement: au.core_statement ?? au.text ?? "",
-        short_explanation: au.short_explanation ?? null,
-        bloom_min: au.bloom_min ?? null,
-        selected: true
-      })).filter((au: GeneratedAU) => au.core_statement.trim() !== "");
+      const mapped: GeneratedAU[] = rawAus
+        .map((au: any) => ({
+          core_statement: au.core_statement ?? au.text ?? "",
+          short_explanation: au.short_explanation ?? null,
+          bloom_min: au.bloom_min ?? null,
+          selected: true,
+        }))
+        .filter((au: GeneratedAU) => au.core_statement.trim() !== "");
 
       if (mapped.length === 0) {
-        setError("GPT không sinh được AU nào. Vui lòng kiểm tra lại LLO hoặc tài liệu.");
+        setError(
+          "GPT không sinh được AU nào. Vui lòng kiểm tra lại LLO hoặc tài liệu."
+        );
       } else {
         setAus(mapped);
-        setMsg(`Đã sinh được ${mapped.length} AU. Bạn có thể chọn/bỏ chọn trước khi lưu.`);
+        setMsg(
+          `Đã sinh được ${mapped.length} AU. Bạn có thể chọn/bỏ chọn trước khi lưu.`
+        );
       }
 
       setGenLoading(false);
@@ -158,7 +169,9 @@ export default function AUPage() {
     }
 
     if (!context.course_id || !context.lesson_id) {
-      setError("Thiếu Học phần hoặc Bài học trong bối cảnh. Vui lòng thiết lập lại ở Bước 1.");
+      setError(
+        "Thiếu Học phần hoặc Bài học trong bối cảnh. Vui lòng thiết lập lại ở Bước 1."
+      );
       return;
     }
 
@@ -168,7 +181,7 @@ export default function AUPage() {
 
     try {
       const {
-        data: { session }
+        data: { session },
       } = await supabase.auth.getSession();
 
       if (!session) {
@@ -183,7 +196,7 @@ export default function AUPage() {
         core_statement: au.core_statement,
         short_explanation: au.short_explanation ?? null,
         bloom_min: au.bloom_min ?? null,
-        status: "draft"
+        status: "draft",
       }));
 
       const { error: insertError } = await supabase
@@ -245,8 +258,9 @@ export default function AUPage() {
             Bước 2A – Assessment Units (AU)
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Từ LLO và tài liệu bài học, GPT sẽ gợi ý các Assessment Unit (AU) cốt lõi. 
-            Bạn chọn những AU phù hợp để lưu và dùng cho các bước Misconceptions & MCQ sau này.
+            Từ LLO và tài liệu bài học, GPT sẽ gợi ý các Assessment Unit (AU) cốt
+            lõi. Bạn chọn những AU phù hợp để lưu và dùng cho các bước
+            Misconceptions &amp; MCQ sau này.
           </p>
         </div>
 
@@ -292,7 +306,11 @@ export default function AUPage() {
           <div className="text-xs font-semibold text-slate-700 mb-1">
             LLO của bài học:
           </div>
-          <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-40 overflow-auto whitespace-pre-wrap">
+          {/* CHỖ NÀY ĐÃ CHỈNH FONT */}
+          <pre
+            className="font-sans text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 
+                       max-h-40 overflow-auto whitespace-pre-wrap leading-relaxed"
+          >
             {context.llos_text}
           </pre>
           <p className="mt-1 text-[11px] text-slate-500">
@@ -320,7 +338,8 @@ export default function AUPage() {
                        hover:file:bg-brand-100"
           />
           <p className="mt-1 text-[11px] text-slate-500">
-            Chấp nhận: PDF, Word, PowerPoint, hình ảnh. File không được lưu lên server mà chỉ dùng để GPT phân tích trong phiên làm việc này.
+            Chấp nhận: PDF, Word, PowerPoint, hình ảnh. File không được lưu lên
+            server mà chỉ dùng để GPT phân tích trong phiên làm việc này.
           </p>
         </div>
 
@@ -361,7 +380,9 @@ export default function AUPage() {
             disabled={genLoading}
             className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
           >
-            {genLoading ? "Đang sinh AU từ GPT…" : "Sinh AU từ GPT (từ LLO + tài liệu)"}
+            {genLoading
+              ? "Đang sinh AU từ GPT…"
+              : "Sinh AU từ GPT (từ LLO + tài liệu)"}
           </button>
         </div>
       </div>
@@ -452,7 +473,9 @@ export default function AUPage() {
               disabled={saveLoading || !hasSelected}
               className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-60"
             >
-              {saveLoading ? "Đang lưu AU…" : "Lưu AU đã chọn & tiếp tục Misconceptions"}
+              {saveLoading
+                ? "Đang lưu AU…"
+                : "Lưu AU đã chọn & tiếp tục Misconceptions"}
             </button>
           </div>
         </div>
