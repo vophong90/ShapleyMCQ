@@ -1,3 +1,4 @@
+// app/api/llo-eval/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ type LloEvalRequest = {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as LloEvalRequest | null;
+    const body = (await req.json().catch(() => null)) as LloEvalRequest | null;
 
     if (!body) {
       return NextResponse.json(
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Bạn có thể override bằng OPENAI_LLO_MODEL, nếu không sẽ dùng gpt-5.1
+    // Bạn có thể override bằng OPENAI_LLO_MODEL, mặc định dùng gpt-5.1
     const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
 
     // 🔥 PROMPT LỆNH ĐẦY ĐỦ
@@ -107,38 +108,8 @@ Các LLO (mỗi dòng là một LLO):
 ${llos_text}
 `.trim();
 
-    // JSON schema để Responses API ép trả đúng JSON
-    const jsonSchema = {
-      type: "object",
-      properties: {
-        overall_comment: { type: "string" },
-        items: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              llo: { type: "string" },
-              inferred_bloom: { type: "string" },
-              bloom_match: { type: "string" },
-              level_fit: { type: "string" },
-              comments: { type: "string" }
-            },
-            required: [
-              "llo",
-              "inferred_bloom",
-              "bloom_match",
-              "level_fit",
-              "comments"
-            ],
-            additionalProperties: false
-          }
-        }
-      },
-      required: ["overall_comment", "items"],
-      additionalProperties: false
-    };
-
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    // 🚀 Gọi Responses API – LƯU Ý: dùng text.format thay cho response_format
+    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -147,33 +118,32 @@ ${llos_text}
       body: JSON.stringify({
         model,
         input: prompt,
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "llo_eval_result",
-            schema: jsonSchema,
-            strict: true
-          }
+        // Đây là cách mới: yêu cầu output ở dạng JSON text
+        text: {
+          format: "json"
         }
       })
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenAI error tại /api/llo-eval:", errorText);
+    const data = await openaiRes.json().catch(() => null);
+
+    if (!openaiRes.ok) {
+      // Đẩy luôn body lỗi từ OpenAI ra client để debug dễ
+      console.error("OpenAI error tại /api/llo-eval:", data);
       return NextResponse.json(
-        { error: "Lỗi khi gọi GPT", detail: errorText },
+        {
+          error: "Lỗi khi gọi GPT",
+          detail: JSON.stringify(data, null, 2)
+        },
         { status: 500 }
       );
     }
-
-    const data = await response.json();
 
     // Đọc đúng schema /v1/responses:
     // data.output[0].content[0].text
     let rawText = "";
 
-    if (Array.isArray(data.output) && data.output.length > 0) {
+    if (Array.isArray(data?.output) && data.output.length > 0) {
       const firstOutput = data.output[0];
       if (
         Array.isArray(firstOutput.content) &&
