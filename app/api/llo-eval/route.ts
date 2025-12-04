@@ -88,7 +88,7 @@ ${llos_text}
       body: JSON.stringify({
         model,
         input: prompt,
-        // ✅ đúng chuẩn Responses API
+        // đúng chuẩn Responses API
         response_format: { type: "json_object" }
       })
     });
@@ -104,14 +104,21 @@ ${llos_text}
 
     const data = await response.json();
 
-    // Responses API thường có sẵn output_text là string
-    const rawText: string =
-      data.output_text ??
-      data.output?.[0]?.content?.[0]?.text?.value ??
-      "";
+    // ✅ Lấy text đúng schema: output[0].content[0].text
+    let rawText = "";
+
+    const firstOutput = Array.isArray(data.output) ? data.output[0] : undefined;
+    const firstContent = firstOutput?.content?.[0];
+
+    if (firstContent && typeof firstContent.text === "string") {
+      rawText = firstContent.text;
+    } else if (typeof data.output_text === "string") {
+      // phòng trường hợp sau này SDK / proxy thêm output_text
+      rawText = data.output_text;
+    }
 
     if (!rawText) {
-      console.error("Không có output_text trong Responses:", data);
+      console.error("Không có text trong response:", JSON.stringify(data, null, 2));
       return NextResponse.json(
         { error: "Không nhận được content từ GPT" },
         { status: 500 }
