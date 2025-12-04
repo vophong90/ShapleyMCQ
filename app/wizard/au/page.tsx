@@ -61,7 +61,7 @@ export default function AUPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // NEW: userId + courses/lessons + AU đã lưu
+  // userId + courses/lessons + AU đã lưu
   const [userId, setUserId] = useState<string | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [lessons, setLessons] = useState<Lesson[]>([]);
@@ -89,7 +89,7 @@ export default function AUPage() {
     }
   }, [router]);
 
-  // NEW: lấy session để có userId
+  // lấy session để có userId
   useEffect(() => {
     let cancelled = false;
     async function loadSession() {
@@ -97,7 +97,7 @@ export default function AUPage() {
         data: { session },
       } = await supabase.auth.getSession();
       if (cancelled) return;
-      if (!session) return; // nếu chưa login thì các hành động save sẽ tự redirect sau
+      if (!session) return;
       setUserId(session.user.id);
     }
     loadSession();
@@ -106,7 +106,7 @@ export default function AUPage() {
     };
   }, []);
 
-  // NEW: load danh sách Học phần của user
+  // load danh sách Học phần của user
   useEffect(() => {
     if (!userId) return;
 
@@ -133,12 +133,14 @@ export default function AUPage() {
     };
   }, [userId]);
 
-  // NEW: load Lessons khi chọn course
+  // load Lessons khi chọn course
   useEffect(() => {
-    if (!userId || !context?.course_id) {
+    if (!userId || !context || !context.course_id) {
       setLessons([]);
       return;
     }
+
+    const courseId = context.course_id;
 
     let cancelled = false;
 
@@ -147,7 +149,7 @@ export default function AUPage() {
         .from("lessons")
         .select("id, title, course_id")
         .eq("owner_id", userId)
-        .eq("course_id", context.course_id!)
+        .eq("course_id", courseId)
         .order("order_in_course", { ascending: true });
 
       if (cancelled) return;
@@ -162,14 +164,17 @@ export default function AUPage() {
     return () => {
       cancelled = true;
     };
-  }, [userId, context?.course_id]);
+  }, [userId, context]);
 
-  // NEW: load AU đã lưu cho course + lesson hiện tại
+  // load AU đã lưu cho course + lesson hiện tại
   useEffect(() => {
-    if (!userId || !context?.course_id || !context.lesson_id) {
+    if (!userId || !context || !context.course_id || !context.lesson_id) {
       setSavedAus([]);
       return;
     }
+
+    const lessonCourseId = context.course_id;
+    const lessonId = context.lesson_id;
 
     let cancelled = false;
 
@@ -181,8 +186,8 @@ export default function AUPage() {
           "id, core_statement, short_explanation, bloom_min, status, created_at"
         )
         .eq("owner_id", userId)
-        .eq("course_id", context.course_id!)
-        .eq("lesson_id", context.lesson_id!)
+        .eq("course_id", lessonCourseId)
+        .eq("lesson_id", lessonId)
         .order("created_at", { ascending: true });
 
       if (cancelled) return;
@@ -199,7 +204,7 @@ export default function AUPage() {
     return () => {
       cancelled = true;
     };
-  }, [userId, context?.course_id, context?.lesson_id]);
+  }, [userId, context]);
 
   function persistContext(next: WizardContext) {
     setContext(next);
@@ -208,7 +213,7 @@ export default function AUPage() {
     }
   }
 
-  // --- chọn lại Học phần / Bài học ---
+  // chọn lại Học phần / Bài học
   function handleChangeCourse(e: ChangeEvent<HTMLSelectElement>) {
     const courseId = e.target.value || undefined;
     const course = courses.find((c) => c.id === courseId);
@@ -308,7 +313,7 @@ export default function AUPage() {
 
       const rawAus = Array.isArray(data.aus) ? data.aus : [];
 
-      // NEW: bộ key để chống trùng với AU đã lưu + AU mới
+      // bộ key để chống trùng với AU đã lưu + AU mới
       const existingKeys = new Set<string>();
       savedAus.forEach((a) => {
         existingKeys.add(normalizeCore(a.core_statement || ""));
@@ -490,7 +495,7 @@ export default function AUPage() {
         </button>
       </div>
 
-      {/* NEW: Card chọn Học phần / Bài học */}
+      {/* Card chọn Học phần / Bài học */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
         <div className="text-xs font-semibold text-slate-700">
           Chọn Học phần &amp; Bài học làm bối cảnh sinh AU
@@ -667,7 +672,7 @@ export default function AUPage() {
         </div>
       )}
 
-      {/* NEW: AU đã lưu trước đó */}
+      {/* AU đã lưu trước đó */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div>
