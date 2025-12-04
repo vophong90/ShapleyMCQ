@@ -19,7 +19,8 @@
     "pdf-parse": "^1.1.1",
     "mammoth": "^1.6.0",
     "jszip": "^3.10.1",
-    "fast-xml-parser": "^4.5.0"
+    "fast-xml-parser": "^4.5.0",
+    "recharts": "^2.10.3"
   },
   "devDependencies": {
     "@types/node": "20.11.30",
