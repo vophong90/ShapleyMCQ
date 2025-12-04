@@ -18,18 +18,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid user" }, { status: 401 });
     }
 
-    // COUNT KPIs
-    const [{ count: courseCount }, { count: lessonCount }, { count: lloCount }, { count: auCount }, { count: misCount }, { count: mcqCount }] =
-      await Promise.all([
-        supabase.from("courses").select("*", { count: "exact", head: true }).eq("owner_id", userId),
-        supabase.from("lessons").select("*", { count: "exact", head: true }).eq("owner_id", userId),
-        supabase.from("llos").select("*", { count: "exact", head: true }).eq("owner_id", userId),
-        supabase.from("assessment_units").select("*", { count: "exact", head: true }).eq("owner_id", userId),
-        supabase.from("misconceptions").select("*", { count: "exact", head: true }).eq("owner_id", userId),
-        supabase.from("mcq_items").select("*", { count: "exact", head: true }).eq("owner_id", userId),
-      ]);
+    // ---- KPI COUNTS ----
+    const [
+      { count: courseCount },
+      { count: lessonCount },
+      { count: lloCount },
+      { count: auCount },
+      { count: misCount },
+      { count: mcqCount },
+    ] = await Promise.all([
+      supabase.from("courses").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("lessons").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("llos").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("assessment_units").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("misconceptions").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("mcq_items").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+    ]);
 
-    // Mini chart: MCQ created last 7 days
+    // ---- MCQ LAST 7 DAYS (Sparkline) ----
     const { data: mcqLast7 } = await supabase
       .from("mcq_items")
       .select("id, created_at")
@@ -37,24 +43,53 @@ export async function GET(req: NextRequest) {
       .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
       .order("created_at", { ascending: true });
 
-    const mcqMini = (mcqLast7 || []).map((d) => ({
+    const sparklineMcq = (mcqLast7 || []).map((d) => ({
       date: d.created_at,
       value: 1,
     }));
 
+    // ---- Bloom Distribution for LLO ----
+    const { data: bloomLloRaw } = await supabase
+      .from("llos")
+      .select("bloom_suggested")
+      .eq("owner_id", userId);
+
+    const bloomLlo = Object.entries(
+      (bloomLloRaw || []).reduce((acc: any, row: any) => {
+        if (!row.bloom_suggested) return acc;
+        acc[row.bloom_suggested] = (acc[row.bloom_suggested] || 0) + 1;
+        return acc;
+      }, {})
+    ).map(([name, value]) => ({ name, value }));
+
+    // ---- Bloom Distribution for MCQ ----
+    const { data: bloomMcqRaw } = await supabase
+      .from("mcq_items")
+      .select("bloom_level")
+      .eq("owner_id", userId);
+
+    const bloomMcq = Object.entries(
+      (bloomMcqRaw || []).reduce((acc: any, row: any) => {
+        if (!row.bloom_level) return acc;
+        acc[row.bloom_level] = (acc[row.bloom_level] || 0) + 1;
+        return acc;
+      }, {})
+    ).map(([name, value]) => ({ name, value }));
+
+    // ---- FINAL RETURN (phải khớp DashboardPage) ----
     return NextResponse.json({
       ok: true,
-      kpi: {
-        courses: courseCount ?? 0,
-        lessons: lessonCount ?? 0,
-        llos: lloCount ?? 0,
-        aus: auCount ?? 0,
-        misconceptions: misCount ?? 0,
-        mcqs: mcqCount ?? 0,
-      },
-      miniCharts: {
-        mcqLastWeek: mcqMini,
-      },
+
+      courseCount: courseCount ?? 0,
+      lessonCount: lessonCount ?? 0,
+      lloCount: lloCount ?? 0,
+      auCount: auCount ?? 0,
+      misCount: misCount ?? 0,
+      mcqCount: mcqCount ?? 0,
+
+      bloomLlo,      // For BarMini
+      bloomMcq,      // For DonutMini
+      sparklineMcq,  // For Sparkline
     });
   } catch (err) {
     console.error("Error /api/dashboard/stats:", err);
