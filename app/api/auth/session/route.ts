@@ -1,25 +1,26 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createServerClient } from "@supabase/ssr";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export async function GET(request: Request) {
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return request.headers.get("cookie") ?? "";
+        }
+      }
+    }
+  );
 
-export async function GET() {
-  // Lấy session từ client cookie
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
 
   if (!session) {
-    return NextResponse.json(
-      { error: "No session" },
-      { status: 401 }
-    );
+    return NextResponse.json({ error: "No session" }, { status: 401 });
   }
 
   const userId = session.user.id;
-
-  // Trả userId trong Header Authorization
   const res = NextResponse.json({ ok: true });
   res.headers.set("Authorization", `Bearer ${userId}`);
   return res;
