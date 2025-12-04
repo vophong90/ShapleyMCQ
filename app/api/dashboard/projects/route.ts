@@ -1,3 +1,4 @@
+// app/api/dashboard/projects/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -8,27 +9,39 @@ export async function GET(req: NextRequest) {
   try {
     const supabase = getSupabaseAdmin();
 
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
+    // --- AUTH ---
+    const auth = req.headers.get("Authorization");
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userId = authHeader.replace("Bearer ", "").trim();
+    const userId = auth.replace("Bearer ", "").trim();
     if (!userId) {
       return NextResponse.json({ error: "Invalid user" }, { status: 401 });
     }
 
-    // Pagination
+    // --- PAGINATION ---
     const page = Number(req.nextUrl.searchParams.get("page") || 1);
-    const pageSize = 20;
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
+    const limit = Number(req.nextUrl.searchParams.get("limit") || 5);
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
 
+    // --- QUERY PROJECTS ---
     const { data, count, error } = await supabase
-      .from("mcq_items")
-      .select("id, stem, created_at, course_id, au_id", { count: "exact" })
+      .from("mcq_projects")
+      .select(
+        `
+        id,
+        title,
+        progress,
+        updated_at,
+        courses:course_id (title),
+        lessons:lesson_id (title)
+        `,
+        { count: "exact" }
+      )
       .eq("owner_id", userId)
-      .order("created_at", { ascending: false })
+      .order("updated_at", { ascending: false })
       .range(from, to);
 
     if (error) throw error;
@@ -37,7 +50,7 @@ export async function GET(req: NextRequest) {
       ok: true,
       page,
       total: count ?? 0,
-      items: data ?? [],
+      data: data ?? [],
     });
   } catch (err) {
     console.error("Error /api/dashboard/projects:", err);
