@@ -18,14 +18,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid user" }, { status: 401 });
     }
 
-    // ---- KPI COUNTS ----
+    // --- COUNT KPIs ---
     const [
       { count: courseCount },
       { count: lessonCount },
       { count: lloCount },
       { count: auCount },
       { count: misCount },
-      { count: mcqCount },
+      { count: mcqCount }
     ] = await Promise.all([
       supabase.from("courses").select("*", { count: "exact", head: true }).eq("owner_id", userId),
       supabase.from("lessons").select("*", { count: "exact", head: true }).eq("owner_id", userId),
@@ -35,62 +35,78 @@ export async function GET(req: NextRequest) {
       supabase.from("mcq_items").select("*", { count: "exact", head: true }).eq("owner_id", userId),
     ]);
 
-    // ---- MCQ LAST 7 DAYS (Sparkline) ----
+    // =====================================================
+    // 1) SPARKLINE — MCQ created last 7 days (auto-fill)
+    // =====================================================
+    const today = new Date();
+    const past7 = new Date(Date.now() - 6 * 86400000);
+
     const { data: mcqLast7 } = await supabase
       .from("mcq_items")
       .select("id, created_at")
       .eq("owner_id", userId)
-      .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
+      .gte("created_at", past7.toISOString())
       .order("created_at", { ascending: true });
 
-    const sparklineMcq = (mcqLast7 || []).map((d) => ({
-      date: d.created_at,
-      value: 1,
-    }));
+    // build 7-day array even if empty
+    const sparkline = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today.getTime() - (6 - i) * 86400000);
+      const dateStr = d.toISOString().substring(0, 10);
 
-    // ---- Bloom Distribution for LLO ----
-    const { data: bloomLloRaw } = await supabase
+      const count = (mcqLast7 || []).filter(x =>
+        x.created_at.substring(0, 10) === dateStr
+      ).length;
+
+      sparkline.push({ date: dateStr, value: count });
+    }
+
+    // =====================================================
+    // 2) BLOOM LEVEL CHART — LLO (auto-fill)
+    // =====================================================
+    const bloomLevels = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
+
+    const { data: bloomRawLlo } = await supabase
       .from("llos")
       .select("bloom_suggested")
       .eq("owner_id", userId);
 
-    const bloomLlo = Object.entries(
-      (bloomLloRaw || []).reduce((acc: any, row: any) => {
-        if (!row.bloom_suggested) return acc;
-        acc[row.bloom_suggested] = (acc[row.bloom_suggested] || 0) + 1;
-        return acc;
-      }, {})
-    ).map(([name, value]) => ({ name, value }));
+    const bloomCountLlo = bloomLevels.map(level => ({
+      name: level,
+      value: bloomRawLlo?.filter(x => x.bloom_suggested === level).length ?? 0
+    }));
 
-    // ---- Bloom Distribution for MCQ ----
-    const { data: bloomMcqRaw } = await supabase
+    // =====================================================
+    // 3) BLOOM LEVEL CHART — MCQ (auto-fill)
+    // =====================================================
+    const { data: bloomRawMcq } = await supabase
       .from("mcq_items")
       .select("bloom_level")
       .eq("owner_id", userId);
 
-    const bloomMcq = Object.entries(
-      (bloomMcqRaw || []).reduce((acc: any, row: any) => {
-        if (!row.bloom_level) return acc;
-        acc[row.bloom_level] = (acc[row.bloom_level] || 0) + 1;
-        return acc;
-      }, {})
-    ).map(([name, value]) => ({ name, value }));
+    const bloomCountMcq = bloomLevels.map(level => ({
+      name: level,
+      value: bloomRawMcq?.filter(x => x.bloom_level === level).length ?? 0
+    }));
 
-    // ---- FINAL RETURN (phải khớp DashboardPage) ----
+    // =====================================================
+    // RESPONSE
+    // =====================================================
     return NextResponse.json({
       ok: true,
-
-      courseCount: courseCount ?? 0,
-      lessonCount: lessonCount ?? 0,
-      lloCount: lloCount ?? 0,
-      auCount: auCount ?? 0,
-      misCount: misCount ?? 0,
-      mcqCount: mcqCount ?? 0,
-
-      bloomLlo,      // For BarMini
-      bloomMcq,      // For DonutMini
-      sparklineMcq,  // For Sparkline
+      kpi: {
+        courses: courseCount ?? 0,
+        lessons: lessonCount ?? 0,
+        llos: lloCount ?? 0,
+        aus: auCount ?? 0,
+        misconceptions: misCount ?? 0,
+        mcqs: mcqCount ?? 0,
+      },
+      bloomLlo: bloomCountLlo,
+      bloomMcq: bloomCountMcq,
+      sparklineMcq: sparkline
     });
+
   } catch (err) {
     console.error("Error /api/dashboard/stats:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
