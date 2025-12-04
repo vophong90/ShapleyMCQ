@@ -1,19 +1,29 @@
+// app/api/llo-eval/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
 type LloEvalRequest = {
   specialty_name?: string;
-  learner_level: string; 
-  bloom_level: string;
-  llos_text: string; 
+  learner_level?: string;
+  bloom_level?: string;
+  llos_text?: string;
 };
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as LloEvalRequest;
+    const body = (await req.json()) as LloEvalRequest | null;
 
-    if (!body.learner_level || !body.bloom_level || body.llos_text.trim() === "") {
+    if (!body) {
+      return NextResponse.json(
+        { error: "Body request trống" },
+        { status: 400 }
+      );
+    }
+
+    const { learner_level, bloom_level, llos_text, specialty_name } = body;
+
+    if (!learner_level || !bloom_level || !llos_text || !llos_text.trim()) {
       return NextResponse.json(
         { error: "Thiếu learner_level, bloom_level hoặc llos_text" },
         { status: 400 }
@@ -22,17 +32,15 @@ export async function POST(req: NextRequest) {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
+      // Lưu log để xem trên Vercel
+      console.error("OPENAI_API_KEY không tồn tại trong môi trường server");
       return NextResponse.json(
         { error: "Thiếu OPENAI_API_KEY trên server" },
         { status: 500 }
       );
     }
 
-    // Model cao nhất bạn đang dùng
-    const model =
-      process.env.OPENAI_LLO_MODEL?.trim() || "gpt-5.1";
-
-    const { learner_level, bloom_level, llos_text, specialty_name } = body;
+    const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
 
     const prompt = `
 Bạn là chuyên gia giáo dục y khoa, am hiểu thang Bloom (revised) và các bậc đào tạo y khoa.
@@ -72,7 +80,6 @@ Các LLO:
 ${llos_text}
 `.trim();
 
-    // 🔥 GPT-5.1 API mới – không dùng messages nữa
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -81,7 +88,9 @@ ${llos_text}
       },
       body: JSON.stringify({
         model,
-        input: prompt
+        input: prompt,
+        // Bắt model xuất JSON “sạch”
+        response_format: { type: "json" }
       })
     });
 
@@ -95,30 +104,37 @@ ${llos_text}
     }
 
     const data = await response.json();
-    const content = data.output_text;
 
-    if (!content) {
+    // Responses API: JSON trả về sẽ nằm trong output_text,
+    // nhưng ta vẫn kiểm tra fallback từ output nếu cần.
+    const rawText: string =
+      data.output_text ??
+      data.output?.[0]?.content?.[0]?.text?.value ??
+      "";
+
+    if (!rawText) {
+      console.error("Không có output_text trong Responses:", data);
       return NextResponse.json(
         { error: "Không nhận được content từ GPT" },
         { status: 500 }
       );
     }
 
-    let parsed;
+    let parsed: any;
     try {
-      parsed = JSON.parse(content);
+      parsed = JSON.parse(rawText);
     } catch (e) {
-      console.error("JSON parse error:", e, "raw:", content);
+      console.error("JSON parse error:", e, "raw:", rawText);
+      // Trả lại raw để bạn debug trên client nếu cần
       return NextResponse.json(
-        { error: "GPT trả về JSON không hợp lệ", raw: content },
+        { error: "GPT trả về JSON không hợp lệ", raw: rawText },
         { status: 500 }
       );
     }
 
     return NextResponse.json(parsed, { status: 200 });
-
   } catch (e: any) {
-    console.error(e);
+    console.error("Lỗi server /api/llo-eval:", e);
     return NextResponse.json(
       { error: "Lỗi server", detail: String(e?.message || e) },
       { status: 500 }
