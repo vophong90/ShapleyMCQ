@@ -39,10 +39,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Bạn có thể override bằng OPENAI_LLO_MODEL, mặc định dùng gpt-5.1
+    // Có thể override bằng OPENAI_LLO_MODEL, mặc định dùng gpt-5.1
     const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
 
-    // 🔥 PROMPT LỆNH ĐẦY ĐỦ
     const prompt = `
 Bạn là chuyên gia giáo dục y khoa, am hiểu thang Bloom (revised) và các bậc đào tạo y khoa.
 
@@ -76,27 +75,6 @@ Bạn PHẢI trả lời CHỈ bằng JSON với cấu trúc CHÍNH XÁC như sa
   ]
 }
 
-Giải thích:
-
-- overall_comment: Nhận xét chung về bộ LLO (tối đa 4–5 câu, ngắn gọn, súc tích).
-- items: Mỗi phần tử tương ứng 1 LLO (theo đúng thứ tự xuất hiện).
-  - llo: nguyên văn LLO.
-  - inferred_bloom: mức Bloom thực tế mà bạn suy luận (chỉ dùng các giá trị: remember, understand, apply, analyze, evaluate, create).
-  - bloom_match:
-      - "good"     = mức Bloom thực tế phù hợp với Bloom mục tiêu.
-      - "too_low"  = Bloom thực tế thấp hơn Bloom mục tiêu (LLO quá đơn giản).
-      - "too_high" = Bloom thực tế cao hơn Bloom mục tiêu (LLO quá phức tạp).
-  - level_fit:
-      - "good"      = phù hợp bậc học.
-      - "too_easy"  = quá dễ so với bậc học.
-      - "too_hard"  = quá khó so với bậc học.
-  - comments: góp ý cụ thể cho LLO đó (1–3 câu, tập trung vào động từ và mức độ tư duy).
-
-YÊU CẦU QUAN TRỌNG:
-- Không được thêm bất kỳ trường nào khác ngoài các trường trong schema trên.
-- Không được trả lời bằng tiếng Anh, dùng TIẾNG VIỆT học thuật, rõ ràng, súc tích.
-- Không được bao LLO trong dấu gạch đầu dòng mới, hãy giữ nguyên như văn bản đầu vào.
-
 Dữ liệu đầu vào:
 
 - Chuyên ngành: ${specialty_name || "không rõ"}
@@ -108,8 +86,8 @@ Các LLO (mỗi dòng là một LLO):
 ${llos_text}
 `.trim();
 
-    // 🚀 Gọi Responses API – LƯU Ý: dùng text.format thay cho response_format
-    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
+    // 🚀 Gọi CHAT COMPLETIONS API – JSON mode
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -117,18 +95,24 @@ ${llos_text}
       },
       body: JSON.stringify({
         model,
-        input: prompt,
-        // Đây là cách mới: yêu cầu output ở dạng JSON text
-        text: {
-          format: "json"
-        }
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Bạn là trợ lý giáo dục y khoa, CHỈ trả lời bằng JSON đúng schema yêu cầu."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
       })
     });
 
     const data = await openaiRes.json().catch(() => null);
 
     if (!openaiRes.ok) {
-      // Đẩy luôn body lỗi từ OpenAI ra client để debug dễ
       console.error("OpenAI error tại /api/llo-eval:", data);
       return NextResponse.json(
         {
@@ -139,39 +123,23 @@ ${llos_text}
       );
     }
 
-    // Đọc đúng schema /v1/responses:
-    // data.output[0].content[0].text
-    let rawText = "";
+    const content = data?.choices?.[0]?.message?.content;
 
-    if (Array.isArray(data?.output) && data.output.length > 0) {
-      const firstOutput = data.output[0];
-      if (
-        Array.isArray(firstOutput.content) &&
-        firstOutput.content.length > 0 &&
-        typeof firstOutput.content[0].text === "string"
-      ) {
-        rawText = firstOutput.content[0].text;
-      }
-    }
-
-    if (!rawText) {
-      console.error(
-        "Không có text trong response từ /v1/responses:",
-        JSON.stringify(data, null, 2)
-      );
+    if (!content || typeof content !== "string") {
+      console.error("Không có message.content hợp lệ:", data);
       return NextResponse.json(
-        { error: "Không nhận được content từ GPT" },
+        { error: "Không nhận được content hợp lệ từ GPT" },
         { status: 500 }
       );
     }
 
     let parsed: any;
     try {
-      parsed = JSON.parse(rawText);
+      parsed = JSON.parse(content);
     } catch (e) {
-      console.error("JSON parse error ở /api/llo-eval:", e, "raw:", rawText);
+      console.error("JSON parse error ở /api/llo-eval:", e, "raw:", content);
       return NextResponse.json(
-        { error: "GPT trả về JSON không hợp lệ", raw: rawText },
+        { error: "GPT trả về JSON không hợp lệ", raw: content },
         { status: 500 }
       );
     }
