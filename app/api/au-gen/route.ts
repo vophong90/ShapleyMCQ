@@ -3,26 +3,34 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+type AuGenRequest = {
+  specialty_name?: string;
+  learner_level?: string;
+  bloom_level?: string;
+  llos_text?: string;
+  support_text?: string | null;
+};
+
 export async function POST(req: NextRequest) {
   try {
-    // ✅ Nhận FormData (vì client gửi FormData với files)
-    const formData = await req.formData();
+    const body = (await req.json()) as AuGenRequest | null;
 
-    const llos_text = (formData.get("llos_text") as string | null) || "";
-    const learner_level = (formData.get("learner_level") as string | null) || "";
-    const bloom_level = (formData.get("bloom_level") as string | null) || "";
-    const specialty_name =
-      (formData.get("specialty_name") as string | null) || "không rõ";
-    const course_title =
-      (formData.get("course_title") as string | null) || "";
-    const lesson_title =
-      (formData.get("lesson_title") as string | null) || "";
+    if (!body) {
+      return NextResponse.json(
+        { error: "Body request trống" },
+        { status: 400 }
+      );
+    }
 
-    // Có thể có nhiều "files"
-    const files = formData.getAll("files") as File[];
-    const fileNames = files.map((f) => f.name).filter(Boolean);
+    const {
+      specialty_name,
+      learner_level,
+      bloom_level,
+      llos_text,
+      support_text,
+    } = body;
 
-    if (!llos_text.trim()) {
+    if (!llos_text || !llos_text.trim()) {
       return NextResponse.json(
         { error: "Thiếu LLOs để tạo AU" },
         { status: 400 }
@@ -41,68 +49,60 @@ export async function POST(req: NextRequest) {
     const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
 
     const prompt = `
-Bạn là chuyên gia giáo dục Y khoa và thiết kế đánh giá.
+Bạn là chuyên gia giáo dục Y khoa.
 
-Nhiệm vụ: Từ danh sách LLO phía dưới, hãy tạo danh sách Assessment Units (AU) – 
-các đơn vị kiến thức nhỏ nhất có thể kiểm tra, để dùng về sau cho Misconceptions & MCQ.
+Nhiệm vụ: Tạo danh sách Assessment Units (AU) – đơn vị kiến thức nhỏ nhất có thể kiểm tra, từ danh sách LLO sau:
 
-Bối cảnh:
-- Chuyên ngành: ${specialty_name}
-- Học phần: ${course_title || "không rõ"}
-- Bài học: ${lesson_title || "không rõ"}
-- Bậc học: ${learner_level || "không rõ"}
-- Mức Bloom mục tiêu: ${bloom_level || "không rõ"}
-
-Tài liệu bài học (chỉ có tên file, không cần tóm tắt chi tiết):
-${fileNames.length ? fileNames.map((n) => "- " + n).join("\n") : "- (không có tài liệu đính kèm)"}
-
-LLO của bài học (mỗi dòng là một LLO):
+LLO:
 ${llos_text}
 
-Yêu cầu tạo AU:
-- Mỗi AU là một "fact" hoặc mệnh đề kiến thức cụ thể, rõ ràng, không mơ hồ.
-- Không gộp nhiều ý vào một AU.
-- Viết sao cho có thể kiểm tra bằng MCQ, ví dụ: "Giải thích được...", "Mô tả được...", "Phân biệt được...".
-- Mỗi AU có thể kèm một giải thích ngắn 1–2 câu giúp hiểu rõ thêm.
-- Nếu suy luận được mức Bloom tối thiểu phù hợp của AU, hãy gán vào trường "bloom_min" (remember|understand|apply|analyze|evaluate|create). Nếu không chắc, có thể để null.
+Văn bản hỗ trợ (từ tài liệu bài học, file user upload):
+${support_text && support_text.trim().length > 0 ? support_text : "Không có văn bản hỗ trợ."}
 
-Chỉ trả lời BẰNG JSON "sạch" với cấu trúc CHÍNH XÁC như sau, không thêm bất cứ trường nào khác, không thêm text bên ngoài JSON:
+Thông tin bối cảnh:
+- Chuyên ngành: ${specialty_name || "không rõ"}
+- Bậc học: ${learner_level || "không rõ"}  (undergrad | postgrad | phd)
+- Mức Bloom mục tiêu: ${bloom_level || "không rõ"}
+
+Yêu cầu:
+- AU phải ngắn, rõ, cụ thể, không mơ hồ.
+- Mỗi AU chỉ chứa một ý duy nhất, có thể kiểm tra độc lập.
+- Viết AU dưới dạng mệnh đề có thể kiểm tra được (dùng để sinh MCQ).
+- Nội dung AU phải phù hợp với bậc học và mức Bloom mục tiêu.
+
+Trả lại JSON với cấu trúc CHÍNH XÁC:
 
 {
   "aus": [
-    {
-      "core_statement": "AU 1 ...",
-      "short_explanation": "Giải thích ngắn gọn về AU 1 ...",
-      "bloom_min": "apply"
-    },
-    {
-      "core_statement": "AU 2 ...",
-      "short_explanation": "Giải thích ngắn gọn về AU 2 ...",
-      "bloom_min": "analyze"
-    }
+    { "text": "AU 1 ..." },
+    { "text": "AU 2 ..." }
   ]
 }
+
+Không được thêm trường nào khác ngoài "aus" và "text".
 `.trim();
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model,
         input: prompt,
-        // ✅ Bắt model xuất JSON "sạch"
+        // Bảo GPT xuất đúng JSON object
         text: {
-          format: { type: "json" }
-        }
-      })
+          format: {
+            type: "json_object",
+          },
+        },
+      }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("OpenAI /responses error:", errorText);
+      console.error("OpenAI /v1/responses error:", errorText);
       return NextResponse.json(
         { error: "Lỗi khi gọi GPT", detail: errorText },
         { status: 500 }
@@ -111,43 +111,43 @@ Chỉ trả lời BẰNG JSON "sạch" với cấu trúc CHÍNH XÁC như sau, k
 
     const data = await response.json();
 
-    // ✅ Responses API kiểu mới: lấy text từ output[0].content[0].text
+    // Lấy text từ output -> content -> text
     const rawText: string =
-      data?.output?.[0]?.content?.[0]?.text ??
-      data?.output_text ?? // fallback nếu OpenAI vẫn trả field này
-      "";
+      data?.output?.[0]?.content?.find(
+        (c: any) => c.type === "output_text"
+      )?.text ?? "";
 
     if (!rawText) {
-      console.error("Không có output text hợp lệ trong Responses:", data);
+      console.error("Không tìm thấy output_text trong Responses:", data);
       return NextResponse.json(
-        { error: "GPT không trả về nội dung" },
+        { error: "Không nhận được nội dung từ GPT" },
         { status: 500 }
       );
     }
 
-    let parsed;
+    let parsed: any;
     try {
       parsed = JSON.parse(rawText);
     } catch (err) {
-      console.error("JSON parse error từ GPT:", err, "raw:", rawText);
+      console.error("JSON parse error (AU):", err, "raw:", rawText);
       return NextResponse.json(
-        { error: "GPT trả về JSON sai format", raw: rawText },
+        { error: "GPT trả về JSON không hợp lệ", raw: rawText },
         { status: 500 }
       );
     }
 
-    // Đảm bảo luôn trả về { aus: [...] }
-    if (!parsed || !Array.isArray(parsed.aus)) {
-      console.error("JSON không có field 'aus' đúng dạng:", parsed);
+    // Đảm bảo có mảng aus
+    if (!parsed.aus || !Array.isArray(parsed.aus)) {
+      console.error("JSON không có field 'aus':", parsed);
       return NextResponse.json(
-        { error: "JSON không có mảng 'aus' hợp lệ", raw: parsed },
+        { error: "JSON không có trường 'aus'", raw: parsed },
         { status: 500 }
       );
     }
 
     return NextResponse.json(
       {
-        aus: parsed.aus
+        aus: parsed.aus,
       },
       { status: 200 }
     );
