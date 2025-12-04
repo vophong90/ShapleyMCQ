@@ -32,7 +32,6 @@ export async function POST(req: NextRequest) {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      // Lưu log để xem trên Vercel
       console.error("OPENAI_API_KEY không tồn tại trong môi trường server");
       return NextResponse.json(
         { error: "Thiếu OPENAI_API_KEY trên server" },
@@ -89,8 +88,8 @@ ${llos_text}
       body: JSON.stringify({
         model,
         input: prompt,
-        // Bắt model xuất JSON “sạch”
-        response_format: { type: "json" }
+        // ✅ đúng chuẩn Responses API
+        response_format: { type: "json_object" }
       })
     });
 
@@ -105,8 +104,7 @@ ${llos_text}
 
     const data = await response.json();
 
-    // Responses API: JSON trả về sẽ nằm trong output_text,
-    // nhưng ta vẫn kiểm tra fallback từ output nếu cần.
+    // Responses API thường có sẵn output_text là string
     const rawText: string =
       data.output_text ??
       data.output?.[0]?.content?.[0]?.text?.value ??
@@ -125,7 +123,6 @@ ${llos_text}
       parsed = JSON.parse(rawText);
     } catch (e) {
       console.error("JSON parse error:", e, "raw:", rawText);
-      // Trả lại raw để bạn debug trên client nếu cần
       return NextResponse.json(
         { error: "GPT trả về JSON không hợp lệ", raw: rawText },
         { status: 500 }
