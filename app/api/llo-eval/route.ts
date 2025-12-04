@@ -1,4 +1,3 @@
-// app/api/llo-eval/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -39,21 +38,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Bạn có thể override bằng OPENAI_LLO_MODEL, nếu không sẽ dùng gpt-5.1
     const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
 
+    // 🔥 PROMPT LỆNH ĐẦY ĐỦ
     const prompt = `
 Bạn là chuyên gia giáo dục y khoa, am hiểu thang Bloom (revised) và các bậc đào tạo y khoa.
 
-Nhiệm vụ:
-1) Phân tích từng LLO (learning outcome) được cung cấp.
-2) Suy luận mức Bloom thực tế của từng LLO dựa trên động từ & nội dung.
-3) Đánh giá mức Bloom người dùng chọn có phù hợp không.
-4) Đánh giá độ phù hợp của LLO với bậc đào tạo:
-   - undergrad = sinh viên y khoa
-   - postgrad = học viên sau đại học
-   - phd = nghiên cứu sinh
+Nhiệm vụ của bạn:
 
-Trả lời CHỈ bằng JSON với cấu trúc:
+1) Phân tích từng LLO (learning outcome) được cung cấp (mỗi dòng là một LLO).
+2) Suy luận mức Bloom thực tế của từng LLO dựa trên:
+   - Động từ chính (verb) trong câu.
+   - Nội dung kiến thức / kỹ năng mà LLO hướng tới.
+3) So sánh mức Bloom thực tế với mức Bloom mục tiêu do người dùng chọn.
+4) Đánh giá độ phù hợp của LLO với bậc đào tạo:
+   - undergrad  = sinh viên y khoa (đại học)
+   - postgrad   = học viên sau đại học (BS nội trú, CK1, CK2…)
+   - phd        = nghiên cứu sinh
+5) Góp ý ngắn gọn, cụ thể cho từng LLO:
+   - Nếu Bloom quá thấp hoặc quá cao so với mục tiêu → đề xuất cách chỉnh.
+   - Nếu mức độ khó không phù hợp bậc học → gợi ý nâng/giảm độ phức tạp.
+
+Bạn PHẢI trả lời CHỈ bằng JSON với cấu trúc CHÍNH XÁC như sau, không thêm trường khác:
 
 {
   "overall_comment": "string",
@@ -68,16 +75,68 @@ Trả lời CHỈ bằng JSON với cấu trúc:
   ]
 }
 
-Không được thêm trường nào khác.
+Giải thích:
 
-Dữ liệu:
+- overall_comment: Nhận xét chung về bộ LLO (tối đa 4–5 câu, ngắn gọn, súc tích).
+- items: Mỗi phần tử tương ứng 1 LLO (theo đúng thứ tự xuất hiện).
+  - llo: nguyên văn LLO.
+  - inferred_bloom: mức Bloom thực tế mà bạn suy luận (chỉ dùng các giá trị: remember, understand, apply, analyze, evaluate, create).
+  - bloom_match:
+      - "good"     = mức Bloom thực tế phù hợp với Bloom mục tiêu.
+      - "too_low"  = Bloom thực tế thấp hơn Bloom mục tiêu (LLO quá đơn giản).
+      - "too_high" = Bloom thực tế cao hơn Bloom mục tiêu (LLO quá phức tạp).
+  - level_fit:
+      - "good"      = phù hợp bậc học.
+      - "too_easy"  = quá dễ so với bậc học.
+      - "too_hard"  = quá khó so với bậc học.
+  - comments: góp ý cụ thể cho LLO đó (1–3 câu, tập trung vào động từ và mức độ tư duy).
+
+YÊU CẦU QUAN TRỌNG:
+- Không được thêm bất kỳ trường nào khác ngoài các trường trong schema trên.
+- Không được trả lời bằng tiếng Anh, dùng TIẾNG VIỆT học thuật, rõ ràng, súc tích.
+- Không được bao LLO trong dấu gạch đầu dòng mới, hãy giữ nguyên như văn bản đầu vào.
+
+Dữ liệu đầu vào:
+
 - Chuyên ngành: ${specialty_name || "không rõ"}
-- Bậc đào tạo: ${learner_level}
-- Mức Bloom mục tiêu: ${bloom_level}
+- Bậc đào tạo (learner_level): ${learner_level}
+- Mức Bloom mục tiêu (bloom_level): ${bloom_level}
 
-Các LLO:
+Các LLO (mỗi dòng là một LLO):
+
 ${llos_text}
 `.trim();
+
+    // JSON schema để Responses API ép trả đúng JSON
+    const jsonSchema = {
+      type: "object",
+      properties: {
+        overall_comment: { type: "string" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              llo: { type: "string" },
+              inferred_bloom: { type: "string" },
+              bloom_match: { type: "string" },
+              level_fit: { type: "string" },
+              comments: { type: "string" }
+            },
+            required: [
+              "llo",
+              "inferred_bloom",
+              "bloom_match",
+              "level_fit",
+              "comments"
+            ],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["overall_comment", "items"],
+      additionalProperties: false
+    };
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -88,14 +147,20 @@ ${llos_text}
       body: JSON.stringify({
         model,
         input: prompt,
-        // đúng chuẩn Responses API
-        response_format: { type: "json_object" }
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "llo_eval_result",
+            schema: jsonSchema,
+            strict: true
+          }
+        }
       })
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("OpenAI error:", errorText);
+      console.error("OpenAI error tại /api/llo-eval:", errorText);
       return NextResponse.json(
         { error: "Lỗi khi gọi GPT", detail: errorText },
         { status: 500 }
@@ -104,21 +169,26 @@ ${llos_text}
 
     const data = await response.json();
 
-    // ✅ Lấy text đúng schema: output[0].content[0].text
+    // Đọc đúng schema /v1/responses:
+    // data.output[0].content[0].text
     let rawText = "";
 
-    const firstOutput = Array.isArray(data.output) ? data.output[0] : undefined;
-    const firstContent = firstOutput?.content?.[0];
-
-    if (firstContent && typeof firstContent.text === "string") {
-      rawText = firstContent.text;
-    } else if (typeof data.output_text === "string") {
-      // phòng trường hợp sau này SDK / proxy thêm output_text
-      rawText = data.output_text;
+    if (Array.isArray(data.output) && data.output.length > 0) {
+      const firstOutput = data.output[0];
+      if (
+        Array.isArray(firstOutput.content) &&
+        firstOutput.content.length > 0 &&
+        typeof firstOutput.content[0].text === "string"
+      ) {
+        rawText = firstOutput.content[0].text;
+      }
     }
 
     if (!rawText) {
-      console.error("Không có text trong response:", JSON.stringify(data, null, 2));
+      console.error(
+        "Không có text trong response từ /v1/responses:",
+        JSON.stringify(data, null, 2)
+      );
       return NextResponse.json(
         { error: "Không nhận được content từ GPT" },
         { status: 500 }
@@ -129,7 +199,7 @@ ${llos_text}
     try {
       parsed = JSON.parse(rawText);
     } catch (e) {
-      console.error("JSON parse error:", e, "raw:", rawText);
+      console.error("JSON parse error ở /api/llo-eval:", e, "raw:", rawText);
       return NextResponse.json(
         { error: "GPT trả về JSON không hợp lệ", raw: rawText },
         { status: 500 }
