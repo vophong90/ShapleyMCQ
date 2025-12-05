@@ -174,7 +174,7 @@ export default function DashboardPage() {
           <ModuleCard
             title="Bước 5. MCQ Analysis"
             desc="Phân tích bộ đề: độ khó, phân biệt, distrator, Shapley... (đang phát triển)."
-            href="/wizard/mcq-analysis"
+            href="/wizard/simulate"
             chart={
               hasSparklineMcq ? (
                 <Sparkline data={safeStats.sparklineMcq} />
