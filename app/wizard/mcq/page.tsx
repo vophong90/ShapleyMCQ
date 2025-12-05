@@ -531,26 +531,36 @@ export default function MCQWizard() {
         });
       }
 
-      // Insert options
-      const options = [
-        { mcq_id: mcqId, text: mcq.correct_answer, is_correct: true },
-        ...mcq.distractors.map((d: string) => ({
-          mcq_id: mcqId,
+            // Insert options vào mcq_options
+      const labels = ["A", "B", "C", "D", "E", "F"]; // đủ cho 1 đáp án đúng + 5 distractor
+
+      const optionRows = [
+        {
+          item_id: mcqId,          // 👈 đúng tên cột
+          label: labels[0],        // A = đáp án đúng
+          text: mcq.correct_answer,
+          is_correct: true,
+          misconception_id: null,  // tạm thời chưa gán cụ thể Mis
+        },
+        ...mcq.distractors.slice(0, labels.length - 1).map((d: string, i: number) => ({
+          item_id: mcqId,
+          label: labels[i + 1],    // B, C, D...
           text: d,
           is_correct: false,
+          misconception_id: null,  // sau này nếu muốn map từng distractor ↔ misconception thì chỉnh ở đây
         })),
       ];
 
-      await supabase.from("mcq_options").insert(options);
+      const { error: optError } = await supabase
+        .from("mcq_options")
+        .insert(optionRows);
 
-      alert(`MCQ #${index + 1} đã được lưu!`);
-    } catch (e) {
-      console.error(e);
-      alert("Lỗi server khi lưu MCQ.");
-    } finally {
-      setSavingIndex(null);
-    }
-  }
+      if (optError) {
+        console.error(optError);
+        alert("Lưu MCQ thất bại (mcq_options).");
+        setSavingIndex(null);
+        return;
+      }
 
   // ========== RENDER ==========
 
