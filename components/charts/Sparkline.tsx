@@ -9,7 +9,7 @@ export default function Sparkline({ data }: { data: any[] }) {
         <LineChart data={data}>
           <Line
             type="monotone"
-            dataKey="count"
+            dataKey="value"   // ✅ khớp với API sparklineMcq
             stroke="#6366f1"
             strokeWidth={2}
             dot={false}
