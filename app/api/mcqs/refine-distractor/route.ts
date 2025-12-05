@@ -4,12 +4,12 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { text } = body;
+    const body = await req.json().catch(() => null);
+    const text = body?.text as string | undefined;
 
-    if (!text || typeof text !== "string") {
+    if (!text || !text.trim()) {
       return NextResponse.json(
-        { error: "Thiếu distractor để refine." },
+        { error: "Thiếu distractor cần refine." },
         { status: 400 }
       );
     }
@@ -17,51 +17,55 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.OPENAI_API_KEY;
     const model = process.env.OPENAI_MCQ_MODEL?.trim() || "gpt-5.1";
 
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY chưa được cấu hình trên server." },
+        { status: 500 }
+      );
+    }
+
     const prompt = `
-Bạn là chuyên gia NBME/USMLE chuyên viết distractor.
+Bạn là chuyên gia viết distractor cho câu hỏi trắc nghiệm NBME/USMLE.
 
-Hãy tinh chỉnh distractor sau:
-- Ngắn gọn, tự nhiên
-- Sai nhưng hợp lý
-- Không được đúng một phần
-- Không được trùng wording với đáp án đúng
-- Dựa trên typical misconception của sinh viên
-- Dễ đánh lừa nhưng không vô lý
+Hãy viết lại distractor sau:
+- Nghe có vẻ hợp lý và "plausible".
+- Không trùng wording với đáp án đúng (giả định đúng).
+- Không quá vô lý, không đúng một phần.
+- Ngắn gọn, rõ ràng, phù hợp phong cách NBME.
 
-Chỉ trả về duy nhất 1 chuỗi: distractor đã refine.
+Distractor gốc:
+${text}
 
-DISTRACTOR:
-"${text}"
+Chỉ trả về distractor mới, KHÔNG giải thích, KHÔNG thêm ghi chú.
 `.trim();
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model,
-        input: prompt
-      })
+        input: prompt,
+      }),
     });
 
     const data = await response.json();
-    const textOut = data.output_text;
+    const out: string | undefined = (data as any)?.output_text;
 
-    if (!textOut) {
+    if (!out) {
       return NextResponse.json(
-        { error: "GPT không trả về refined distractor." },
+        { error: "GPT không trả về distractor mới." },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      refined: textOut.trim()
-    });
+    return NextResponse.json({ refined: out.trim() });
   } catch (err: any) {
+    console.error("refine-distractor error:", err);
     return NextResponse.json(
-      { error: "Lỗi server refine distractor", detail: String(err) },
+      { error: "Lỗi server khi refine distractor.", detail: String(err) },
       { status: 500 }
     );
   }
