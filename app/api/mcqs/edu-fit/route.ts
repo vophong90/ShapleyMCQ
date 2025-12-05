@@ -25,20 +25,25 @@ export async function POST(req: NextRequest) {
       body.distractors.length === 0
     ) {
       return NextResponse.json(
-        { error: "Thiếu dữ liệu MCQ cho Educational Fit (stem, correct_answer, distractors)." },
+        {
+          error:
+            "Thiếu dữ liệu MCQ cho Educational Fit (stem, correct_answer, distractors).",
+        },
         { status: 400 }
       );
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MCQ_MODEL?.trim() || "gpt-5.1";
-
     if (!apiKey) {
+      console.error("OPENAI_API_KEY không tồn tại trong môi trường server");
       return NextResponse.json(
-        { error: "OPENAI_API_KEY chưa được cấu hình trên server." },
+        { error: "Thiếu OPENAI_API_KEY trên server" },
         { status: 500 }
       );
     }
+
+    // Có thể override bằng OPENAI_MCQ_MODEL, mặc định dùng gpt-5.1
+    const model = (process.env.OPENAI_MCQ_MODEL || "gpt-5.1").trim();
 
     const {
       stem,
@@ -67,7 +72,9 @@ Thông tin:
 Câu MCQ:
 - Stem: ${stem}
 - Correct answer: ${correct_answer}
-- Distractors: ${distractors.map((d, i) => `(${i + 1}) ${d}`).join("; ")}
+- Distractors: ${distractors
+      .map((d, i) => `(${i + 1}) ${d}`)
+      .join("; ")}
 - Explanation: ${explanation}
 
 LLOs (mỗi dòng là một LLO):
@@ -108,7 +115,8 @@ TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON THUẦN (KHÔNG TEXT THỪA):
 }
 `.trim();
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    // 🚀 Gọi CHAT COMPLETIONS API – JSON mode
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -116,32 +124,56 @@ TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON THUẦN (KHÔNG TEXT THỪA):
       },
       body: JSON.stringify({
         model,
-        input: prompt,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Bạn là trợ lý giáo dục y khoa, CHỈ trả lời bằng JSON đúng schema yêu cầu.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
       }),
     });
 
-    const data = await response.json();
-    const text: string | undefined = (data as any)?.output_text;
+    const data = await openaiRes.json().catch(() => null);
 
-    if (!text) {
+    if (!openaiRes.ok) {
+      console.error("OpenAI error tại /api/mcqs/edu-fit:", data);
       return NextResponse.json(
-        { error: "GPT không trả về nội dung Educational Fit." },
+        {
+          error: "Lỗi khi gọi GPT (edu-fit)",
+          detail: JSON.stringify(data, null, 2),
+        },
+        { status: 500 }
+      );
+    }
+
+    const content = data?.choices?.[0]?.message?.content;
+
+    if (!content || typeof content !== "string") {
+      console.error("Không có message.content hợp lệ (edu-fit):", data);
+      return NextResponse.json(
+        { error: "Không nhận được content hợp lệ từ GPT (edu-fit)" },
         { status: 500 }
       );
     }
 
     let parsed: any;
     try {
-      parsed = JSON.parse(text);
+      parsed = JSON.parse(content);
     } catch (e) {
-      console.error("Edu-fit JSON parse error:", e, text);
+      console.error("JSON parse error ở /api/mcqs/edu-fit:", e, "raw:", content);
       return NextResponse.json(
-        { error: "JSON GPT trả về sai định dạng", raw: text },
+        { error: "GPT trả về JSON không hợp lệ (edu-fit)", raw: content },
         { status: 500 }
       );
     }
 
-    return NextResponse.json(parsed);
+    return NextResponse.json(parsed, { status: 200 });
   } catch (err: any) {
     console.error("edu-fit error:", err);
     return NextResponse.json(
