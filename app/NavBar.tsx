@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Profile = {
@@ -14,6 +15,7 @@ type Profile = {
 export function MainNav() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
     async function loadProfile() {
@@ -47,8 +49,13 @@ export function MainNav() {
     loadProfile();
   }, []);
 
-  const displayName =
-    profile?.name || profile?.email || ""; // ưu tiên name, fallback email
+  const displayName = profile?.name || profile?.email || ""; // ưu tiên name, fallback email
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setProfile(null);
+    router.push("/"); // hoặc "/login" tuỳ anh
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -80,22 +87,28 @@ export function MainNav() {
 
         {/* Nếu là admin thì thêm nút Admin */}
         {profile?.role === "admin" && (
-          <Link
-            href="/admin"
-            className="text-slate-600 hover:text-brand-600"
-          >
+          <Link href="/admin" className="text-slate-600 hover:text-brand-600">
             Admin
           </Link>
         )}
 
-        {/* Loading thì có thể để trống/nhỏ gọn */}
+        {/* Loading */}
         {loading ? (
           <span className="text-xs text-slate-400">Đang tải…</span>
         ) : profile ? (
-          // ĐÃ LOGIN: hiện tên user, ẩn Đăng nhập/Đăng ký
-          <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-            {displayName}
-          </span>
+          // ĐÃ LOGIN: hiện tên + nút Đăng xuất
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+              {displayName}
+            </span>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="text-xs text-slate-500 hover:text-red-600"
+            >
+              Đăng xuất
+            </button>
+          </div>
         ) : (
           // CHƯA LOGIN: hiện Đăng nhập + Đăng ký
           <>
