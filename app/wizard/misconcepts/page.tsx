@@ -29,12 +29,12 @@ type AU = {
 };
 
 type MisItem = {
-  id?: string;            // id trong bảng misconceptions (nếu có)
-  au_id: string;          // FK tới assessment_units.id
+  id?: string; // id trong bảng misconceptions (nếu có)
+  au_id: string; // FK tới assessment_units.id
   description: string;
   error_type: string;
   approved: boolean;
-  source: "db" | "gpt";   // để phân biệt Mis cũ từ DB và Mis mới từ GPT
+  source: "db" | "gpt"; // để phân biệt Mis cũ từ DB và Mis mới từ GPT
 };
 
 const PAGE = 1000;
@@ -109,7 +109,7 @@ export default function MisconceptWizard() {
   }, []);
 
   // ==== 2. chọn course → load lessons ====
-  async function handleSelectCourse(course: Course) {
+  async function handleSelectCourse(course: Course | null) {
     setSelectedCourse(course);
     setSelectedLesson(null);
     setSelectedLlo(null);
@@ -119,7 +119,7 @@ export default function MisconceptWizard() {
     setSelectedAuIds(new Set());
     setMiscons([]);
 
-    if (!userId) return;
+    if (!course || !userId) return;
 
     let allLessons: Lesson[] = [];
     let from = 0;
@@ -147,7 +147,7 @@ export default function MisconceptWizard() {
   }
 
   // ==== 3. chọn lesson → load LLOs ====
-  async function handleSelectLesson(lesson: Lesson) {
+  async function handleSelectLesson(lesson: Lesson | null) {
     setSelectedLesson(lesson);
     setSelectedLlo(null);
     setLlos([]);
@@ -155,7 +155,7 @@ export default function MisconceptWizard() {
     setSelectedAuIds(new Set());
     setMiscons([]);
 
-    if (!userId || !selectedCourse) return;
+    if (!userId || !selectedCourse || !lesson) return;
 
     let allLlos: LLO[] = [];
     let from = 0;
@@ -184,13 +184,13 @@ export default function MisconceptWizard() {
   }
 
   // ==== 4. chọn LLO → load AUs ====
-  async function handleSelectLlo(llo: LLO) {
+  async function handleSelectLlo(llo: LLO | null) {
     setSelectedLlo(llo);
     setAus([]);
     setSelectedAuIds(new Set());
     setMiscons([]);
 
-    if (!userId || !selectedCourse || !selectedLesson) return;
+    if (!userId || !selectedCourse || !selectedLesson || !llo) return;
 
     let allAus: AU[] = [];
     let from = 0;
@@ -224,9 +224,7 @@ export default function MisconceptWizard() {
     if (!userId) return;
 
     // Xóa các Mis tương ứng với AU không còn được chọn
-    setMiscons((prev) =>
-      prev.filter((m) => newSelectedAuIds.has(m.au_id))
-    );
+    setMiscons((prev) => prev.filter((m) => newSelectedAuIds.has(m.au_id)));
 
     const auIds = Array.from(newSelectedAuIds);
     if (auIds.length === 0) return;
@@ -311,9 +309,7 @@ export default function MisconceptWizard() {
     const learnerLevel =
       selectedLlo.level_suggested || "Sinh viên y khoa (undergrad)";
     const bloomLevel =
-      selectedLlo.bloom_suggested ||
-      selectedAus[0]?.bloom_min ||
-      "analyze";
+      selectedLlo.bloom_suggested || selectedAus[0]?.bloom_min || "analyze";
 
     setLoadingGPT(true);
 
@@ -329,10 +325,12 @@ export default function MisconceptWizard() {
             id: a.id,
             text: a.core_statement,
           })),
-          existing: Object.entries(existingByAu).map(([au_id, descriptions]) => ({
-            au_id,
-            descriptions,
-          })),
+          existing: Object.entries(existingByAu).map(
+            ([au_id, descriptions]) => ({
+              au_id,
+              descriptions,
+            })
+          ),
         }),
       });
 
@@ -381,7 +379,9 @@ export default function MisconceptWizard() {
       });
 
       if (newMis.length === 0) {
-        alert("Không có Misconception mới (có thể GPT sinh trùng với Mis cũ).");
+        alert(
+          "Không có Misconception mới (có thể GPT sinh trùng với Mis cũ)."
+        );
         return;
       }
 
@@ -446,9 +446,7 @@ export default function MisconceptWizard() {
       }
     }
 
-    const auIds = Array.from(
-      new Set(approvedMis.map((m) => m.au_id))
-    );
+    const auIds = Array.from(new Set(approvedMis.map((m) => m.au_id)));
 
     if (auIds.length === 0 && selectedAuIds.size === 0) {
       alert("Không có AU nào để lưu Mis.");
@@ -534,128 +532,156 @@ export default function MisconceptWizard() {
     [miscons]
   );
 
+  // ====== UI ======
   return (
-    <div className="flex h-[calc(100vh-60px)] bg-gray-50">
-      {/* LEFT PANEL – Course / Lesson / LLO / AU */}
-      <div className="w-96 border-r bg-white flex flex-col overflow-hidden">
-        <div className="p-4 border-b">
-          <div className="text-lg font-semibold">Misconcept Wizard</div>
-          {loadingInit && (
-            <div className="text-xs text-gray-500 mt-1">Đang tải dữ liệu…</div>
+    <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
+            Bước 3 – Misconceptions
+          </h1>
+          <p className="text-sm text-slate-600 mt-1">
+            Chọn Học phần → Bài học → LLO → AU, sau đó dùng GPT để sinh các
+            Misconceptions. Bạn có thể chỉnh sửa, duyệt hoặc xoá từng Mis trước
+            khi lưu xuống Supabase.
+          </p>
+        </div>
+
+        {loadingInit && (
+          <div className="text-xs text-slate-500">
+            Đang tải danh sách Học phần…
+          </div>
+        )}
+      </div>
+
+      {/* Card 1: Chọn Học phần / Bài học */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
+        <div className="text-xs font-semibold text-slate-700 mb-1">
+          Chọn Học phần &amp; Bài học
+        </div>
+        <div className="grid md:grid-cols-2 gap-4 text-xs">
+          {/* Course */}
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              Học phần (Course)
+            </label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+              value={selectedCourse?.id ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                const c = courses.find((cc) => cc.id === id) || null;
+                handleSelectCourse(c);
+              }}
+            >
+              <option value="">-- Chọn Học phần --</option>
+              {courses.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code ? `${c.code} – ${c.title}` : c.title}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Danh sách lấy từ các Học phần mà bạn sở hữu.
+            </p>
+          </div>
+
+          {/* Lesson */}
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              Bài học (Lesson)
+            </label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 disabled:bg-slate-50"
+              value={selectedLesson?.id ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                const l = lessons.find((ll) => ll.id === id) || null;
+                handleSelectLesson(l);
+              }}
+              disabled={!selectedCourse}
+            >
+              <option value="">
+                {selectedCourse ? "-- Chọn Bài học --" : "Chọn Học phần trước"}
+              </option>
+              {lessons.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.title}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Sau khi chọn Bài học, danh sách LLO và AU sẽ được tải bên dưới.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Card 2: LLO & AU */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
+        <div className="flex flex-wrap justify-between gap-2 items-center">
+          <div className="text-xs font-semibold text-slate-700">
+            LLO &amp; Assessment Units
+          </div>
+          {selectedLlo && (
+            <div className="text-[11px] text-slate-500 max-w-[60%]">
+              <span className="font-semibold text-slate-700">LLO: </span>
+              <span className="line-clamp-1">{selectedLlo.text}</span>
+            </div>
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
-          {/* Courses */}
+        {/* LLO select */}
+        <div className="grid md:grid-cols-2 gap-4 text-xs">
           <div>
-            <div className="font-semibold mb-1">Học phần (Course)</div>
-            <div className="border rounded-lg max-h-40 overflow-y-auto">
-              {courses.length === 0 && (
-                <div className="p-2 text-gray-400 text-xs">
-                  Chưa có học phần.
-                </div>
-              )}
-              {courses.map((c) => (
-                <div
-                  key={c.id}
-                  className={`px-2 py-1 cursor-pointer border-b last:border-b-0 hover:bg-gray-50 ${
-                    selectedCourse?.id === c.id
-                      ? "bg-blue-50 font-medium"
-                      : ""
-                  }`}
-                  onClick={() => handleSelectCourse(c)}
-                >
-                  <div className="text-sm">
-                    {c.code ? `${c.code} – ${c.title}` : c.title}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Lessons */}
-          <div>
-            <div className="font-semibold mb-1">Bài học (Lesson)</div>
-            <div className="border rounded-lg max-h-40 overflow-y-auto">
-              {selectedCourse == null && (
-                <div className="p-2 text-gray-400 text-xs">
-                  Chọn Học phần trước.
-                </div>
-              )}
-              {selectedCourse != null && lessons.length === 0 && (
-                <div className="p-2 text-gray-400 text-xs">
-                  Học phần chưa có bài học nào.
-                </div>
-              )}
-              {lessons.map((l) => (
-                <div
-                  key={l.id}
-                  className={`px-2 py-1 cursor-pointer border-b last:border-b-0 hover:bg-gray-50 ${
-                    selectedLesson?.id === l.id
-                      ? "bg-blue-50 font-medium"
-                      : ""
-                  }`}
-                  onClick={() => handleSelectLesson(l)}
-                >
-                  {l.title}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* LLOs */}
-          <div>
-            <div className="font-semibold mb-1">LLOs</div>
-            <div className="border rounded-lg max-h-40 overflow-y-auto">
-              {selectedLesson == null && (
-                <div className="p-2 text-gray-400 text-xs">
-                  Chọn Bài học trước.
-                </div>
-              )}
-              {selectedLesson != null && llos.length === 0 && (
-                <div className="p-2 text-gray-400 text-xs">
-                  Bài học chưa có LLO nào.
-                </div>
-              )}
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              Learning Outcomes (LLO)
+            </label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 disabled:bg-slate-50"
+              value={selectedLlo?.id ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                const llo = llos.find((x) => x.id === id) || null;
+                handleSelectLlo(llo);
+              }}
+              disabled={!selectedLesson}
+            >
+              <option value="">
+                {selectedLesson ? "-- Chọn LLO --" : "Chọn Bài học trước"}
+              </option>
               {llos.map((llo) => (
-                <div
-                  key={llo.id}
-                  className={`px-2 py-1 cursor-pointer border-b last:border-b-0 hover:bg-gray-50 ${
-                    selectedLlo?.id === llo.id
-                      ? "bg-blue-50 font-medium"
-                      : ""
-                  }`}
-                  onClick={() => handleSelectLlo(llo)}
-                >
-                  <div className="text-xs text-gray-500">
-                    {llo.code || "LLO"}
-                  </div>
-                  <div className="text-sm line-clamp-2">{llo.text}</div>
-                </div>
+                <option key={llo.id} value={llo.id}>
+                  {llo.code ? `${llo.code} – ${llo.text}` : llo.text}
+                </option>
               ))}
-            </div>
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              LLO được lấy từ bước 1. Mỗi LLO có thể gắn với nhiều AU.
+            </p>
           </div>
 
-          {/* AUs */}
+          {/* AU list + ticks */}
           <div>
-            <div className="font-semibold mb-1">
-              Assessment Units (AU) – tick để sinh Mis
-            </div>
-            <div className="border rounded-lg max-h-60 overflow-y-auto">
-              {selectedLlo == null && (
-                <div className="p-2 text-gray-400 text-xs">
-                  Chọn LLO trước.
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              Assessment Units (tick AU cần sinh Mis)
+            </label>
+            <div className="border rounded-lg max-h-44 overflow-y-auto text-xs">
+              {!selectedLlo && (
+                <div className="p-2 text-slate-400">
+                  Chọn LLO để hiển thị AU.
                 </div>
               )}
-              {selectedLlo != null && aus.length === 0 && (
-                <div className="p-2 text-gray-400 text-xs">
-                  LLO chưa có Assessment Unit nào.
+              {selectedLlo && aus.length === 0 && (
+                <div className="p-2 text-slate-400">
+                  LLO này chưa có Assessment Unit nào.
                 </div>
               )}
               {aus.map((a) => (
                 <label
                   key={a.id}
-                  className="flex items-start gap-2 px-2 py-1 border-b last:border-b-0 text-sm cursor-pointer hover:bg-gray-50"
+                  className="flex items-start gap-2 px-2 py-1 border-b last:border-b-0 cursor-pointer hover:bg-slate-50"
                 >
                   <input
                     type="checkbox"
@@ -664,216 +690,221 @@ export default function MisconceptWizard() {
                     onChange={() => toggleAu(a)}
                   />
                   <div>
-                    <div className="font-medium line-clamp-3">
+                    <div className="font-medium line-clamp-2 text-slate-800">
                       {a.core_statement}
                     </div>
                     {a.bloom_min && (
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        Bloom: {a.bloom_min}
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        Bloom tối thiểu: {a.bloom_min}
                       </div>
                     )}
                   </div>
                 </label>
               ))}
             </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              GPT sẽ chỉ sinh Misconceptions cho các AU được tick.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* MAIN PANEL – Mis list */}
-      <div className="flex-1 flex flex-col p-6 overflow-y-auto">
-        {!selectedCourse && (
-          <div className="text-gray-500 text-center mt-20">
-            Chọn một Học phần ở panel trái để bắt đầu.
+      {/* Card 3: AU đã chọn + nút GPT */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-3">
+        <div className="flex flex-wrap justify-between items-center gap-2">
+          <div>
+            <div className="text-xs font-semibold text-slate-700">
+              AU đã tick để sinh Misconceptions
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Kiểm tra lại danh sách AU cốt lõi, sau đó bấm nút GPT để sinh
+              Misconceptions gợi ý.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={generateMiscon}
+            disabled={
+              loadingGPT ||
+              !selectedCourse ||
+              !selectedLesson ||
+              !selectedLlo ||
+              selectedAuIds.size === 0
+            }
+            className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loadingGPT ? "Đang sinh Mis..." : "Sinh Misconceptions (GPT)"}
+          </button>
+        </div>
+
+        {selectedAusList.length > 0 ? (
+          <ul className="mt-2 list-disc list-inside space-y-1 text-xs text-slate-700">
+            {selectedAusList.map((a) => (
+              <li key={a.id} className="line-clamp-1">
+                {a.core_statement}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-[11px] text-slate-400">
+            Chưa có AU nào được tick. Vui lòng chọn AU ở card phía trên.
+          </p>
+        )}
+      </div>
+
+      {/* Card 4: Danh sách Misconceptions */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold text-slate-700">
+              Danh sách Misconceptions
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Bạn có thể chỉnh sửa nội dung Mis, phân loại lỗi, tick “Duyệt”,
+              refine từng Mis bằng GPT hoặc xoá bớt trước khi lưu.
+            </p>
+          </div>
+          <div className="text-[11px] text-slate-500">
+            Tổng:{" "}
+            <span className="font-semibold text-slate-800">
+              {miscons.length}
+            </span>{" "}
+            Mis (Đã duyệt:{" "}
+            <span className="font-semibold text-emerald-700">
+              {totalApproved}
+            </span>
+            )
+          </div>
+        </div>
+
+        {miscons.length === 0 && (
+          <div className="text-sm text-slate-400 mt-2">
+            Chưa có Misconception nào cho các AU đã chọn.
+            <br />
+            • Nếu đã lưu trước đây, hãy đảm bảo bạn đã tick đúng AU. <br />
+            • Hoặc bấm nút “Sinh Misconceptions (GPT)” ở card bên trên để tạo
+            mới.
           </div>
         )}
 
-        {selectedCourse && (
-          <>
-            <div className="flex flex-wrap gap-2 items-center mb-4 text-sm text-gray-600">
-              <div>
-                <span className="font-semibold">Course:</span>{" "}
-                {selectedCourse.code
-                  ? `${selectedCourse.code} – ${selectedCourse.title}`
-                  : selectedCourse.title}
-              </div>
-              {selectedLesson && (
-                <div>
-                  <span className="font-semibold">Lesson:</span>{" "}
-                  {selectedLesson.title}
-                </div>
-              )}
-              {selectedLlo && (
-                <div className="max-w-[50%]">
-                  <span className="font-semibold">LLO:</span>{" "}
-                  <span className="line-clamp-1">{selectedLlo.text}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Header + nút GPT */}
-            <div className="flex justify-between items-center mb-4">
-              <div className="text-lg font-bold">
-                Misconceptions cho AU đã chọn
-              </div>
-
-              <button
-                onClick={generateMiscon}
-                disabled={
-                  loadingGPT ||
-                  !selectedCourse ||
-                  !selectedLesson ||
-                  !selectedLlo ||
-                  selectedAuIds.size === 0
-                }
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        <div className="space-y-4">
+          {miscons.map((m, i) => {
+            const au = aus.find((a) => a.id === m.au_id);
+            return (
+              <div
+                key={`${m.au_id}-${m.id ?? "tmp"}-${i}`}
+                className="p-4 bg-slate-50 rounded-2xl border border-slate-200"
               >
-                {loadingGPT ? "Đang sinh Mis..." : "Sinh Misconceptions (GPT)"}
-              </button>
-            </div>
-
-            {/* List AU đang chọn + Mis đã có */}
-            {selectedAusList.length > 0 && (
-              <div className="mb-4 text-xs text-gray-600">
-                <div className="font-semibold mb-1">
-                  AU đã tick ({selectedAusList.length}):
-                </div>
-                <ul className="list-disc list-inside space-y-1">
-                  {selectedAusList.map((a) => (
-                    <li key={a.id} className="line-clamp-1">
-                      {a.core_statement}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* MISCON LIST */}
-            <div className="mt-2 space-y-4">
-              {miscons.length === 0 && (
-                <div className="text-gray-400 text-sm mt-6">
-                  Chưa có Misconception nào cho các AU đã chọn.
-                  <br />
-                  • Nếu đã lưu trước đây, hãy đảm bảo bạn đã tick đúng AU.
-                  <br />
-                  • Hoặc bấm nút “Sinh Misconceptions (GPT)” để tạo mới.
-                </div>
-              )}
-
-              {miscons.map((m, i) => {
-                const au = aus.find((a) => a.id === m.au_id);
-                return (
-                  <div
-                    key={`${m.au_id}-${m.id ?? "tmp"}-${i}`}
-                    className="p-4 bg-white rounded-2xl shadow-sm border border-gray-100"
-                  >
-                    {/* AU label */}
-                    {au && (
-                      <div className="text-xs text-gray-500 mb-1">
-                        AU:{" "}
-                        <span className="font-medium line-clamp-1">
-                          {au.core_statement}
-                        </span>
-                      </div>
-                    )}
-
-                    <textarea
-                      className="w-full border rounded-lg p-2 text-sm"
-                      rows={3}
-                      value={m.description}
-                      onChange={(e) =>
-                        updateMisItem(i, "description", e.target.value)
-                      }
-                    />
-
-                    <div className="flex justify-between items-center mt-2">
-                      <div className="flex gap-3 items-center">
-                        <select
-                          value={m.error_type}
-                          onChange={(e) =>
-                            updateMisItem(i, "error_type", e.target.value)
-                          }
-                          className="border rounded-lg px-3 py-1 text-xs"
-                        >
-                          <option value="conceptual">Conceptual</option>
-                          <option value="procedural">Procedural</option>
-                          <option value="bias">Cognitive Bias</option>
-                          <option value="clinical_reasoning">
-                            Clinical reasoning
-                          </option>
-                          <option value="terminology">Terminology</option>
-                        </select>
-
-                        <label className="flex items-center gap-1 text-xs">
-                          <input
-                            type="checkbox"
-                            checked={m.approved}
-                            onChange={(e) =>
-                              updateMisItem(i, "approved", e.target.checked)
-                            }
-                          />
-                          Duyệt
-                        </label>
-
-                        <span
-                          className={`text-[10px] px-2 py-0.5 rounded-full ${
-                            m.source === "db"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                              : "bg-indigo-50 text-indigo-700 border border-indigo-100"
-                          }`}
-                        >
-                          {m.source === "db" ? "Đã lưu" : "GPT mới"}
-                        </span>
-                      </div>
-
-                      <div className="flex gap-3 items-center text-xs">
-                        <button
-                          onClick={() => refineMis(i)}
-                          className="text-blue-600 hover:underline"
-                        >
-                          Refine by GPT
-                        </button>
-                        <button
-                          onClick={() => removeMisItem(i)}
-                          className="text-red-500 hover:underline"
-                        >
-                          Xóa
-                        </button>
-                      </div>
-                    </div>
+                {/* AU label */}
+                {au && (
+                  <div className="text-[11px] text-slate-500 mb-1">
+                    AU:{" "}
+                    <span className="font-medium line-clamp-1 text-slate-800">
+                      {au.core_statement}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
-          </>
-        )}
+                )}
+
+                <textarea
+                  className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                  rows={3}
+                  value={m.description}
+                  onChange={(e) =>
+                    updateMisItem(i, "description", e.target.value)
+                  }
+                />
+
+                <div className="flex flex-wrap justify-between items-center mt-2 gap-3">
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <select
+                      value={m.error_type}
+                      onChange={(e) =>
+                        updateMisItem(i, "error_type", e.target.value)
+                      }
+                      className="border rounded-lg px-3 py-1 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                    >
+                      <option value="conceptual">Conceptual</option>
+                      <option value="procedural">Procedural</option>
+                      <option value="bias">Cognitive bias</option>
+                      <option value="clinical_reasoning">
+                        Clinical reasoning
+                      </option>
+                      <option value="terminology">Terminology</option>
+                    </select>
+
+                    <label className="flex items-center gap-1 text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={m.approved}
+                        onChange={(e) =>
+                          updateMisItem(i, "approved", e.target.checked)
+                        }
+                      />
+                      Duyệt
+                    </label>
+
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                        m.source === "db"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                          : "bg-indigo-50 text-indigo-700 border-indigo-100"
+                      }`}
+                    >
+                      {m.source === "db" ? "Đã lưu" : "GPT mới"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => refineMis(i)}
+                      className="text-brand-700 hover:underline"
+                    >
+                      Refine bằng GPT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeMisItem(i)}
+                      className="text-rose-600 hover:underline"
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {/* RIGHT PANEL – Stats + Save */}
-      <div className="w-72 border-l bg-white p-4 flex flex-col">
-        <div className="text-lg font-semibold mb-4">Tác vụ</div>
-
-        <div className="mb-4 text-sm text-gray-700 space-y-1">
-          <div>Tổng AU trong LLO: {aus.length}</div>
-          <div>AU đã tick: {selectedAuIds.size}</div>
-          <div>Tổng Mis: {miscons.length}</div>
-          <div>Đã duyệt: {totalApproved}</div>
+      {/* Card 5: Tóm tắt & Lưu */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="space-y-1 text-slate-700">
+          <div>
+            <span className="font-semibold">Tổng AU trong LLO:</span>{" "}
+            {aus.length}
+          </div>
+          <div>
+            <span className="font-semibold">AU đã tick:</span>{" "}
+            {selectedAuIds.size}
+          </div>
+          <div>
+            <span className="font-semibold">Tổng Mis:</span> {miscons.length}
+          </div>
+          <div>
+            <span className="font-semibold">Đã duyệt:</span> {totalApproved}
+          </div>
         </div>
 
-        <button
-          onClick={saveMiscon}
-          disabled={saving || !userId || selectedAuIds.size === 0}
-          className="bg-green-600 w-full text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {saving ? "Đang lưu…" : "Lưu Misconceptions"}
-        </button>
-
-        <div className="mt-4 text-[11px] text-gray-500">
-          • Mis đã lưu trước đó sẽ tự động hiển thị khi bạn chọn đúng Course →
-          Lesson → LLO → AU.
-          <br />
-          • GPT sẽ được yêu cầu **không sinh trùng** với các Mis đã lưu, và
-          client cũng lọc trùng lần nữa.
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={saveMiscon}
+            disabled={saving || !userId || selectedAuIds.size === 0}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? "Đang lưu…" : "Lưu Misconceptions"}
+          </button>
         </div>
       </div>
     </div>
