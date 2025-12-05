@@ -5,7 +5,14 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
-    const { stem, correct_answer, distractors, explanation, N } = body || {};
+    const {
+      stem,
+      correct_answer,
+      distractors,
+      explanation,
+      N,
+      personaWeights, // <<– NEW
+    } = body || {};
 
     if (
       !stem ||
@@ -34,9 +41,9 @@ export async function POST(req: NextRequest) {
     // tổng số "sinh viên ảo"
     const totalN = typeof N === "number" && N > 0 ? N : 1200;
 
-    // Map option labels
-    const options = [correct_answer, ...distractors];
-    const labels = ["A", "B", "C", "D"];
+    // Map option labels (tạm thời giới hạn 4 phương án A–D)
+    const options = [correct_answer, ...distractors].slice(0, 4);
+    const labels = ["A", "B", "C", "D"].slice(0, options.length);
 
     const labeledOptions = options.map((text: string, idx: number) => ({
       label: labels[idx],
@@ -98,7 +105,7 @@ Bạn là chuyên gia đo lường đánh giá trong giáo dục Y khoa.
 
 Nhiệm vụ:
 - Với mỗi kiểu người học (persona) dưới đây, hãy ước lượng XÁC SUẤT họ chọn từng phương án A, B, C, D cho câu MCQ đã cho.
-- Xác suất phải >=0 và tổng 4 phương án = 1.
+- Xác suất phải >=0 và tổng các phương án = 1.
 - Expert có xác suất chọn đáp án đúng rất cao.
 - Weak/Guesser chọn sai nhiều hơn, thường tập trung vào distractors "hấp dẫn".
 - Không cần tạo dữ liệu Monte Carlo, chỉ cần trả về phân bố xác suất (probability) cho từng persona.
@@ -126,7 +133,7 @@ YÊU CẦU TRẢ VỀ JSON ĐÚNG CẤU TRÚC (KHÔNG THÊM FIELD KHÁC):
 }
 `.trim();
 
-    // 🚀 Gọi Chat Completions – JSON mode giống /api/llo-eval
+    // 🚀 Gọi Chat Completions – JSON mode
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -191,19 +198,54 @@ YÊU CẦU TRẢ VỀ JSON ĐÚNG CẤU TRÚC (KHÔNG THÊM FIELD KHÁC):
     const personaProbs: { name: string; probs: Record<string, number> }[] =
       parsed.personas || [];
 
+    // =============== XỬ LÝ WEIGHT TỪ FRONTEND ===============
+    const personaNames = personas.map((p) => p.name);
+
+    // Map weight: mặc định 1 cho tất cả nếu không gửi gì
+    const rawWeights: number[] = personaNames.map((name) => {
+      if (
+        personaWeights &&
+        typeof personaWeights === "object" &&
+        typeof personaWeights[name] === "number"
+      ) {
+        return Math.max(0, personaWeights[name]); // không cho âm
+      }
+      return 1; // default equal weight
+    });
+
+    let sumWeight = rawWeights.reduce((s, w) => s + w, 0);
+    if (sumWeight <= 0) {
+      // fallback: tất cả = 1
+      for (let i = 0; i < rawWeights.length; i++) rawWeights[i] = 1;
+      sumWeight = rawWeights.length;
+    }
+
+    // Chuyển weight -> số lượt mô phỏng cho từng persona
+    const personaNs: number[] = [];
+    let sumAssigned = 0;
+    for (let i = 0; i < rawWeights.length; i++) {
+      const ideal = (rawWeights[i] / sumWeight) * totalN;
+      const n_i = Math.max(0, Math.floor(ideal));
+      personaNs.push(n_i);
+      sumAssigned += n_i;
+    }
+
+    // Phân bổ phần còn dư (nếu có) cho các persona đầu tiên
+    let remaining = totalN - sumAssigned;
+    let idx = 0;
+    while (remaining > 0 && personaNs.length > 0) {
+      personaNs[idx % personaNs.length] += 1;
+      remaining--;
+      idx++;
+    }
+
     // =============== MONTE CARLO SAMPLING ===============
     const response_matrix: any[] = [];
     const accuracy_summary: { persona: string; accuracy: number; total: number }[] =
       [];
 
-    const personaNames = personas.map((p) => p.name);
-    const N_per_persona = Math.max(
-      1,
-      Math.floor(totalN / Math.max(1, personaNames.length))
-    );
-
     function sampleFromProbs(probs: Record<string, number>): string {
-      const keys = ["A", "B", "C", "D"];
+      const keys = labels; // dùng đúng số phương án đang có
       const cumulative: number[] = [];
       let acc = 0;
       for (const k of keys) {
@@ -213,40 +255,55 @@ YÊU CẦU TRẢ VỀ JSON ĐÚNG CẤU TRÚC (KHÔNG THÊM FIELD KHÁC):
       if (acc <= 0) {
         // fallback đều
         const r = Math.random();
-        if (r < 0.25) return "A";
-        if (r < 0.5) return "B";
-        if (r < 0.75) return "C";
-        return "D";
+        const step = 1 / keys.length;
+        let threshold = step;
+        for (let i = 0; i < keys.length; i++) {
+          if (r < threshold) return keys[i];
+          threshold += step;
+        }
+        return keys[0];
       }
       const r = Math.random() * acc;
       for (let i = 0; i < keys.length; i++) {
         if (r <= cumulative[i]) return keys[i];
       }
-      return "A";
+      return keys[0];
     }
 
-    for (const personaName of personaNames) {
+    personaNames.forEach((personaName, i) => {
+      const personaN = Math.max(0, personaNs[i] || 0);
+      if (personaN === 0) {
+        // nếu weight = 0 thì bỏ qua persona này
+        return;
+      }
+
       const pObj =
         personaProbs.find((p) => p.name === personaName) ||
         personaProbs[0] || {
           name: personaName,
-          probs: { A: 0.25, B: 0.25, C: 0.25, D: 0.25 },
+          probs: Object.fromEntries(
+            labels.map((l) => [l, 1 / labels.length])
+          ) as Record<string, number>,
         };
 
-      const probs = pObj.probs || {
-        A: 0.25,
-        B: 0.25,
-        C: 0.25,
-        D: 0.25,
-      };
+      // đảm bảo có đầy đủ key A–D (hoặc ít hơn tùy số options)
+      const probs: Record<string, number> = {};
+      const base = pObj.probs || {};
+      if (Object.keys(base).length === 0) {
+        labels.forEach((l) => (probs[l] = 1 / labels.length));
+      } else {
+        labels.forEach((l) => {
+          probs[l] = typeof base[l] === "number" ? base[l] : 0;
+        });
+      }
 
       let correctCount = 0;
 
-      for (let i = 0; i < N_per_persona; i++) {
+      for (let k = 0; k < personaN; k++) {
         const chosenLabel = sampleFromProbs(probs);
-        const idx = labels.indexOf(chosenLabel);
+        const idxOpt = labels.indexOf(chosenLabel);
         const chosenText =
-          idx >= 0 && idx < options.length ? options[idx] : options[0];
+          idxOpt >= 0 && idxOpt < options.length ? options[idxOpt] : options[0];
 
         const isCorrect = chosenLabel === labeledOptions[0].label;
         if (isCorrect) correctCount++;
@@ -261,16 +318,16 @@ YÊU CẦU TRẢ VỀ JSON ĐÚNG CẤU TRÚC (KHÔNG THÊM FIELD KHÁC):
 
       accuracy_summary.push({
         persona: personaName,
-        accuracy: correctCount / N_per_persona,
-        total: N_per_persona,
+        accuracy: personaN > 0 ? correctCount / personaN : 0,
+        total: personaN,
       });
-    }
+    });
 
     return NextResponse.json(
       {
         options: labeledOptions,
         personas: personaProbs,
-        N_per_persona,
+        N_per_persona: totalN, // field này frontend không dùng; tạm trả totalN
         response_matrix,
         accuracy_summary,
       },
