@@ -217,42 +217,46 @@ export default function AUPage() {
     };
   }, [userId, context]);
 
-  // ====== load LLOs từ Supabase cho course + lesson hiện tại ======
-  useEffect(() => {
-    if (!userId || !context || !context.course_id || !context.lesson_id) {
+ // ====== load LLOs từ Supabase cho course + lesson hiện tại ======
+useEffect(() => {
+  if (!userId || !context || !context.course_id || !context.lesson_id) {
+    setLlos([]);
+    return;
+  }
+
+  // Sau khi qua được if trên, context chắc chắn không null
+  const courseId = context.course_id;
+  const lessonId = context.lesson_id;
+
+  let cancelled = false;
+
+  async function loadLLOs() {
+    setLoadingLLOs(true);
+    const { data, error } = await supabase
+      .from("llos")
+      .select("id, text, bloom_suggested, level_suggested")
+      .eq("owner_id", userId)
+      .eq("course_id", courseId!)
+      .eq("lesson_id", lessonId!)
+      .order("created_at", { ascending: true });
+
+    if (cancelled) return;
+
+    if (error) {
+      console.error("Load LLOs error:", error);
       setLlos([]);
-      return;
+    } else {
+      setLlos(data ?? []);
     }
+    setLoadingLLOs(false);
+  }
 
-    let cancelled = false;
+  loadLLOs();
 
-    async function loadLLOs() {
-      setLoadingLLOs(true);
-      const { data, error } = await supabase
-        .from("llos")
-        .select("id, text, bloom_suggested, level_suggested")
-        .eq("owner_id", userId)
-        .eq("course_id", context.course_id!)
-        .eq("lesson_id", context.lesson_id!)
-        .order("created_at", { ascending: true });
-
-      if (cancelled) return;
-
-      if (error) {
-        console.error("Load LLOs error:", error);
-        setLlos([]);
-      } else {
-        setLlos(data ?? []);
-      }
-      setLoadingLLOs(false);
-    }
-
-    loadLLOs();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [userId, context]);
+  return () => {
+    cancelled = true;
+  };
+}, [userId, context?.course_id, context?.lesson_id]);
 
   function persistContext(next: WizardContext) {
     setContext(next);
