@@ -778,7 +778,7 @@ export default function MCQSimulateMultiPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
-            Bước 5 – Monte Carlo & Shapley cho MCQ
+            Bước 5 – Monte Carlo &amp; Shapley cho MCQ
           </h1>
           <p className="text-sm text-slate-600 mt-1">
             Chọn Học phần → Bài học → (tuỳ chọn) AU → tick nhiều MCQ để phân
@@ -877,8 +877,8 @@ export default function MCQSimulateMultiPage() {
               ))}
             </select>
             <p className="mt-1 text-[11px] text-slate-500">
-              Nếu chọn "[MCQ chưa gắn AU]" sẽ lấy các item chỉ gắn Học phần,
-              chưa map với AU.
+              Nếu chọn [MCQ chưa gắn AU] sẽ lấy các item chỉ gắn Học phần, chưa
+              map với AU.
             </p>
           </div>
         </div>
