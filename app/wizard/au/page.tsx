@@ -79,6 +79,7 @@ export default function AUPage() {
   // LLO từ Supabase cho course/lesson hiện tại
   const [llos, setLlos] = useState<LLO[]>([]);
   const [loadingLLOs, setLoadingLLOs] = useState(false);
+  const [selectedLloId, setSelectedLloId] = useState<string | null>(null);
 
   // ====== Load context từ localStorage ======
   useEffect(() => {
@@ -246,10 +247,12 @@ useEffect(() => {
       console.error("Load LLOs error:", error);
       setLlos([]);
     } else {
-      setLlos(data ?? []);
+      const list = data ?? [];
+      setLlos(list);
+      if (!selectedLloId && list.length > 0) {
+        setSelectedLloId(list[0].id);
+      }
     }
-    setLoadingLLOs(false);
-  }
 
   loadLLOs();
 
@@ -266,24 +269,31 @@ useEffect(() => {
   }
 
   // ====== Helper: lấy danh sách LLO hiện tại ======
-  function getCurrentLloLines(): string[] {
-    // Ưu tiên lấy từ DB (bảng llos)
-    const fromDb = llos
-      .map((l) => (l.text || "").trim())
-      .filter((t) => t.length > 0);
-    if (fromDb.length > 0) return fromDb;
-
-    // Fallback: lấy từ context.llos_text (case cũ)
-    if (context?.llos_text) {
-      const fromContext = context.llos_text
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0);
-      if (fromContext.length > 0) return fromContext;
+ function getCurrentLloLines(): string[] {
+  if (selectedLloId && llos.length > 0) {
+    const l = llos.find((x) => x.id === selectedLloId);
+    if (l?.text?.trim()) {
+      return [l.text.trim()];
     }
-
-    return [];
   }
+
+  // Nếu chưa chọn cụ thể LLO, nhưng vẫn muốn dùng toàn bộ (fallback cũ)
+  const fromDb = llos
+    .map((l) => (l.text || "").trim())
+    .filter((t) => t.length > 0);
+  if (fromDb.length > 0) return fromDb;
+
+  // Fallback: lấy từ context.llos_text (case cũ)
+  if (context?.llos_text) {
+    const fromContext = context.llos_text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (fromContext.length > 0) return fromContext;
+  }
+
+  return [];
+ }
 
   // ====== chọn lại Học phần / Bài học ======
   function handleChangeCourse(e: ChangeEvent<HTMLSelectElement>) {
@@ -303,6 +313,7 @@ useEffect(() => {
     setAus([]);
     setSavedAus([]);
     setLlos([]);
+    setSelectedLloId(null);
   }
 
   function handleChangeLesson(e: ChangeEvent<HTMLSelectElement>) {
@@ -339,7 +350,10 @@ useEffect(() => {
       setError("Chưa có bối cảnh. Vui lòng quay lại Bước 1.");
       return;
     }
-
+    if (!selectedLloId) { // 🔥 NEW
+    setError("Vui lòng chọn LLO mục tiêu trước khi sinh AU.");
+    return;
+    }
     const lloLines = getCurrentLloLines();
     if (lloLines.length === 0) {
       setError(
@@ -489,6 +503,10 @@ useEffect(() => {
       );
       return;
     }
+    if (!selectedLloId) {
+      setError("Vui lòng chọn LLO mục tiêu để gắn AU."); 
+      return;
+    }
 
     setSaveLoading(true);
     setError(null);
@@ -508,6 +526,7 @@ useEffect(() => {
         owner_id: session.user.id,
         course_id: context.course_id!,
         lesson_id: context.lesson_id!,
+        llo_id: selectedLloId,
         core_statement: au.core_statement.trim(),
         short_explanation: (au.short_explanation || "")?.trim() || null,
         bloom_min: (au.bloom_min || "")?.trim() || null,
@@ -686,6 +705,30 @@ useEffect(() => {
           )}
         </div>
 
+        {/* Chọn LLO mục tiêu để sinh & gắn AU */}
+        {llos.length > 0 && (
+      <div className="mb-3">
+        <label className="block text-[11px] font-medium text-slate-600 mb-1">
+          LLO mục tiêu (AU sinh ra sẽ gắn với LLO này)
+        </label>
+        <select
+          className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+          value={selectedLloId ?? ""}
+          onChange={(e) => setSelectedLloId(e.target.value || null)}
+          >
+          <option value="">-- Chọn LLO mục tiêu --</option>
+          {llos.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.text}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-[11px] text-slate-500">
+          Bước 2 giả định rằng mỗi lần sinh AU là cho một LLO cụ thể. Bạn sẽ chạy lại bước này nếu cần AU cho LLO khác.
+        </p>
+      </div>
+    )}
+        
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-semibold text-slate-700">
