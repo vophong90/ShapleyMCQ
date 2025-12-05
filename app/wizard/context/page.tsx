@@ -1,3 +1,4 @@
+// app/wizard/context/page.tsx
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
@@ -22,13 +23,19 @@ type Lesson = {
   course_id: string;
 };
 
+// Giữ llos_text để đọc lại localStorage cũ, nhưng UI sẽ dùng lloList
 type ContextState = {
   specialty_id: string;
   learner_level: string;
   bloom_level: string;
-  llos_text: string;
   course_id?: string;
   lesson_id?: string;
+  llos_text?: string; // chỉ để load cũ, không dùng trực tiếp trong UI
+};
+
+type LloLine = {
+  id?: string; // để sau này nếu cần map với Supabase
+  text: string;
 };
 
 const LEARNER_LEVELS = [
@@ -66,16 +73,23 @@ export default function ContextWizardPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [lessons, setLessons] = useState<Lesson[]>([]);
 
-  const [specialtyName, setSpecialtyName] = useState<string | undefined>(undefined);
+  const [specialtyName, setSpecialtyName] = useState<string | undefined>(
+    undefined
+  );
 
   const [state, setState] = useState<ContextState>({
     specialty_id: "",
     learner_level: "",
     bloom_level: "",
-    llos_text: "",
     course_id: "",
     lesson_id: "",
+    llos_text: "",
   });
+
+  // Danh sách LLO để nhập từng dòng + thêm/xóa
+  const [lloList, setLloList] = useState<LloLine[]>([
+    { text: "" }, // ít nhất 1 dòng trống ban đầu
+  ]);
 
   // Tạo mới học phần / bài học
   const [newCourseTitle, setNewCourseTitle] = useState("");
@@ -153,6 +167,22 @@ export default function ContextWizardPage() {
               ...parsed,
             }));
 
+            // LLO list từ llos_text cũ (nếu có)
+            if (parsed.llos_text) {
+              const lines = parsed.llos_text
+                .split("\n")
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+              if (lines.length > 0) {
+                setLloList(lines.map((t) => ({ text: t })));
+              } else {
+                setLloList([{ text: "" }]);
+              }
+            } else {
+              setLloList([{ text: "" }]);
+            }
+
             // Nếu có course_id thì load lessons
             if (parsed.course_id) {
               const { data: lessonData, error: lessonError } = await supabase
@@ -168,14 +198,18 @@ export default function ContextWizardPage() {
                 setLessons(lessonData);
               }
             }
-          } catch {
-            // ignore parse error
+          } catch (e) {
+            console.error("Parse shapleymcq_context error:", e);
+            setLloList([{ text: "" }]);
           }
         } else if (profile?.specialty_id) {
           setState((prev) => ({
             ...prev,
             specialty_id: profile.specialty_id,
           }));
+          setLloList([{ text: "" }]);
+        } else {
+          setLloList([{ text: "" }]);
         }
       }
 
@@ -235,7 +269,15 @@ export default function ContextWizardPage() {
     }));
   }
 
+  function getCleanLloLines(): string[] {
+    return lloList
+      .map((l) => l.text.trim())
+      .filter((line) => line.length > 0);
+  }
+
   function validate(): boolean {
+    const lines = getCleanLloLines();
+
     if (!state.specialty_id) {
       setMsg("Vui lòng chọn chuyên ngành.");
       return false;
@@ -248,7 +290,7 @@ export default function ContextWizardPage() {
       setMsg("Vui lòng chọn mức Bloom.");
       return false;
     }
-    if (!state.llos_text.trim()) {
+    if (lines.length === 0) {
       setMsg("Vui lòng nhập ít nhất một LLO (mỗi dòng một LLO).");
       return false;
     }
@@ -344,6 +386,8 @@ export default function ContextWizardPage() {
       return;
     }
 
+    const lloLines = getCleanLloLines();
+
     try {
       // 1) Course
       let courseId = state.course_id || "";
@@ -368,7 +412,6 @@ export default function ContextWizardPage() {
         }
 
         courseId = data.id;
-        // cập nhật state để lưu vào localStorage
         setState((prev) => ({ ...prev, course_id: courseId }));
       }
 
@@ -397,12 +440,7 @@ export default function ContextWizardPage() {
         setState((prev) => ({ ...prev, lesson_id: lessonId }));
       }
 
-      // 3) LLOs
-      const lloLines = state.llos_text
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-
+      // 3) LLOs – mỗi dòng 1 row
       if (lloLines.length === 0) {
         setMsg("Không có LLO hợp lệ để lưu.");
         setSaving(false);
@@ -431,11 +469,12 @@ export default function ContextWizardPage() {
 
       // 4) Lưu context vào localStorage
       if (typeof window !== "undefined") {
+        const llos_text_str = lloLines.join("\n");
         const contextToSave: ContextState = {
           specialty_id: state.specialty_id,
           learner_level: state.learner_level,
           bloom_level: state.bloom_level,
-          llos_text: state.llos_text,
+          llos_text: llos_text_str,
           course_id: courseId,
           lesson_id: lessonId,
         };
@@ -471,6 +510,9 @@ export default function ContextWizardPage() {
       return;
     }
 
+    const lloLines = getCleanLloLines();
+    const llos_text_str = lloLines.join("\n");
+
     setEvalLoading(true);
 
     try {
@@ -483,7 +525,7 @@ export default function ContextWizardPage() {
           specialty_name: specialtyName,
           learner_level: state.learner_level,
           bloom_level: state.bloom_level,
-          llos_text: state.llos_text,
+          llos_text: llos_text_str,
         }),
       });
 
@@ -515,6 +557,8 @@ export default function ContextWizardPage() {
       </div>
     );
   }
+
+  const cleanLloCount = getCleanLloLines().length;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
@@ -748,22 +792,68 @@ export default function ContextWizardPage() {
           </div>
         </div>
 
-        {/* Block 3: LLOs */}
+        {/* Block 3: LLOs – mỗi dòng một LLO, có nút thêm/xóa */}
         <div>
-          <label className="block text-[13px] font-medium text-slate-700 mb-1">
-            LLOs của bài cần ra câu hỏi
-          </label>
-          <textarea
-            className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 min-h-[140px]"
-            value={state.llos_text}
-            onChange={(e) => handleChange("llos_text", e.target.value)}
-            placeholder={
-              "Mỗi dòng một LLO. Ví dụ:\n- Sinh viên giải thích được cơ chế bệnh sinh của ...\n- Sinh viên phân tích được nguyên nhân chính gây ..."
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-[13px] font-medium text-slate-700">
+              LLOs của bài cần ra câu hỏi
+            </label>
+            <span className="text-[11px] text-slate-500">
+              Tổng:{" "}
+              <span className="font-semibold text-slate-800">
+                {cleanLloCount}
+              </span>{" "}
+              LLO
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {lloList.map((item, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  className="flex-1 border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+                  value={item.text}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLloList((prev) =>
+                      prev.map((row, i) =>
+                        i === idx ? { ...row, text: val } : row
+                      )
+                    );
+                  }}
+                  placeholder={`LLO ${idx + 1}`}
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLloList((prev) =>
+                      prev.length === 1
+                        ? [{ text: "" }] // luôn giữ ít nhất 1 dòng
+                        : prev.filter((_, i) => i !== idx)
+                    )
+                  }
+                  className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 text-[11px] hover:bg-rose-100"
+                >
+                  Xóa
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setLloList((prev) => [...prev, { text: "" }])
             }
-          />
+            className="mt-2 px-3 py-1.5 rounded-lg border border-dashed border-slate-300 text-[11px] text-slate-700 hover:border-brand-400 hover:text-brand-700"
+          >
+            + Thêm LLO
+          </button>
+
           <p className="mt-1 text-[11px] text-slate-500">
-            Các bước sau sẽ dùng LLO này để GPT đánh giá sự phù hợp với Bloom &amp;
-            bậc học, và làm nền sinh AU, misconceptions, MCQ.
+            Mỗi dòng là một LLO riêng. Các bước sau sẽ dùng danh sách này để GPT
+            đánh giá và sinh AU, misconceptions, MCQ.
           </p>
         </div>
 
