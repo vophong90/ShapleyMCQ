@@ -60,7 +60,7 @@ type NbmeResult = {
 type EduFitResult = {
   inferred_bloom: string;
   bloom_match: string; // "good" | "too_low" | "too_high" | string
-  level_fit: string;   // "good" | "too_easy" | "too_hard" | string
+  level_fit: string; // "good" | "too_easy" | "too_hard" | string
   summary: string;
   llo_coverage: {
     llo: string;
@@ -97,14 +97,17 @@ export default function MCQWizard() {
   const [nbmeResults, setNbmeResults] = useState<(NbmeResult | null)[]>([]);
   const [nbmeLoadingIndex, setNbmeLoadingIndex] = useState<number | null>(null);
 
-  const [eduFitResults, setEduFitResults] = useState<(EduFitResult | null)[]>([]);
+  const [eduFitResults, setEduFitResults] = useState<(EduFitResult | null)[]>(
+    []
+  );
   const [eduLoadingIndex, setEduLoadingIndex] = useState<number | null>(null);
 
   const [savingIndex, setSavingIndex] = useState<number | null>(null);
 
   // ===== Điều khiển batch =====
   const [questionCount, setQuestionCount] = useState<number>(3); // 0–10
-  const [clinicalVignette, setClinicalVignette] = useState<boolean>(false);
+  const [clinicalVignette, setClinicalVignette] =
+    useState<boolean>(false);
 
   // ========== LOAD CONTEXT & COURSES ==========
 
@@ -531,24 +534,26 @@ export default function MCQWizard() {
         });
       }
 
-            // Insert options vào mcq_options
+      // Insert options vào mcq_options
       const labels = ["A", "B", "C", "D", "E", "F"]; // đủ cho 1 đáp án đúng + 5 distractor
 
       const optionRows = [
         {
-          item_id: mcqId,          // 👈 đúng tên cột
-          label: labels[0],        // A = đáp án đúng
+          item_id: mcqId,
+          label: labels[0], // A = đáp án đúng
           text: mcq.correct_answer,
           is_correct: true,
-          misconception_id: null,  // tạm thời chưa gán cụ thể Mis
+          misconception_id: null,
         },
-        ...mcq.distractors.slice(0, labels.length - 1).map((d: string, i: number) => ({
-          item_id: mcqId,
-          label: labels[i + 1],    // B, C, D...
-          text: d,
-          is_correct: false,
-          misconception_id: null,  // sau này nếu muốn map từng distractor ↔ misconception thì chỉnh ở đây
-        })),
+        ...mcq.distractors
+          .slice(0, labels.length - 1)
+          .map((d: string, i: number) => ({
+            item_id: mcqId,
+            label: labels[i + 1], // B, C, D...
+            text: d,
+            is_correct: false,
+            misconception_id: null,
+          })),
       ];
 
       const { error: optError } = await supabase
@@ -561,6 +566,15 @@ export default function MCQWizard() {
         setSavingIndex(null);
         return;
       }
+
+      alert(`MCQ #${index + 1} đã được lưu!`);
+    } catch (e) {
+      console.error(e);
+      alert("Lỗi server khi lưu MCQ.");
+    } finally {
+      setSavingIndex(null);
+    }
+  }
 
   // ========== RENDER ==========
 
@@ -666,7 +680,8 @@ export default function MCQWizard() {
               className="border rounded-md px-2 py-1 text-xs min-w-[200px]"
               value={selectedAU?.id ?? ""}
               onChange={(e) => {
-                const au = aus.find((x) => x.id === e.target.value) || null;
+                const au =
+                  aus.find((x) => x.id === e.target.value) || null;
                 if (au) chooseAU(au);
               }}
               disabled={!selectedLloId}
@@ -689,7 +704,9 @@ export default function MCQWizard() {
               max={10}
               className="border rounded-md px-2 py-1 text-xs w-20"
               value={questionCount}
-              onChange={(e) => setQuestionCount(Number(e.target.value) || 0)}
+              onChange={(e) =>
+                setQuestionCount(Number(e.target.value) || 0)
+              }
             />
           </div>
 
@@ -768,8 +785,8 @@ export default function MCQWizard() {
               <span>Các câu MCQ sinh ra</span>
               {mcqs.length > 0 && (
                 <span className="text-xs text-gray-500">
-                  Đã sinh {mcqs.length} câu – chỉnh sửa từng câu, chạy phân tích
-                  và bấm Lưu ở từng card.
+                  Đã sinh {mcqs.length} câu – chỉnh sửa từng câu, chạy phân
+                  tích và bấm Lưu ở từng card.
                 </span>
               )}
             </div>
@@ -777,9 +794,11 @@ export default function MCQWizard() {
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {(!selectedAU || mcqs.length === 0) && (
                 <div className="text-sm text-gray-500">
-                  • Chọn đầy đủ học phần – bài học – LLO – AU – Mis.  
-                  • Chọn số câu muốn sinh (3–5 gợi ý).  
-                  • Tick “Tình huống lâm sàng” nếu muốn dạng clinical vignette.  
+                  • Chọn đầy đủ học phần – bài học – LLO – AU – Mis.{" "}
+                  <br />
+                  • Chọn số câu muốn sinh (3–5 gợi ý). <br />
+                  • Tick “Tình huống lâm sàng” nếu muốn dạng clinical
+                  vignette. <br />
                   • Bấm <b>Generate MCQ (GPT)</b> để xem kết quả ở đây.
                 </div>
               )}
@@ -877,7 +896,9 @@ export default function MCQWizard() {
 
                     {/* EXPLANATION */}
                     <div>
-                      <h3 className="font-semibold text-xs mb-1">Explanation</h3>
+                      <h3 className="font-semibold text-xs mb-1">
+                        Explanation
+                      </h3>
                       <textarea
                         className="w-full border rounded-lg px-2 py-1 text-xs"
                         rows={3}
@@ -923,9 +944,13 @@ export default function MCQWizard() {
                       {nbme && (
                         <>
                           <div>
-                            <span className="font-semibold">Hard rules: </span>
+                            <span className="font-semibold">
+                              Hard rules:{" "}
+                            </span>
                             {nbme.hard_rules.passed ? (
-                              <span className="text-emerald-600">PASSED</span>
+                              <span className="text-emerald-600">
+                                PASSED
+                              </span>
                             ) : (
                               <span className="text-red-600">FAILED</span>
                             )}
@@ -947,8 +972,9 @@ export default function MCQWizard() {
                           </div>
                           <div>{nbme.rubric.summary}</div>
                           <div className="grid grid-cols-1 gap-1">
-                            {Object.entries(nbme.rubric.dimensions || {}).map(
-                              ([k, v]: any) => (
+                            {Object.entries(nbme.rubric.dimensions || {})
+                              .filter(([k]) => k !== "overall_score")
+                              .map(([k, v]: any) => (
                                 <div
                                   key={k}
                                   className="border rounded-md px-2 py-1 bg-slate-50"
@@ -961,11 +987,12 @@ export default function MCQWizard() {
                                   </div>
                                   <div>{v.comment}</div>
                                 </div>
-                              )
-                            )}
+                              ))}
                           </div>
                           <div>
-                            <div className="font-semibold">Gợi ý chỉnh sửa:</div>
+                            <div className="font-semibold">
+                              Gợi ý chỉnh sửa:
+                            </div>
                             <pre className="whitespace-pre-wrap">
                               {nbme.rubric.suggestions}
                             </pre>
@@ -1022,7 +1049,9 @@ export default function MCQWizard() {
                           </div>
 
                           <div>
-                            <div className="font-semibold">LLO coverage:</div>
+                            <div className="font-semibold">
+                              LLO coverage:
+                            </div>
                             <div className="max-h-32 overflow-y-auto space-y-1">
                               {edu.llo_coverage.map((c, i) => (
                                 <div
