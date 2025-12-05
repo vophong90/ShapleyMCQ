@@ -1,9 +1,17 @@
-// app/api/dashboard/stats/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const BLOOM_LEVELS = [
+  "Remember",
+  "Understand",
+  "Apply",
+  "Analyze",
+  "Evaluate",
+  "Create",
+];
 
 export async function GET(req: NextRequest) {
   try {
@@ -19,7 +27,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid user" }, { status: 401 });
     }
 
-    // --- COUNT KPIs ---
+    // =========================
+    // 1) COUNT KPI
+    // =========================
     const [
       { count: courseCount },
       { count: lessonCount },
@@ -54,9 +64,9 @@ export async function GET(req: NextRequest) {
         .eq("owner_id", userId),
     ]);
 
-    // =====================================================
-    // 1) SPARKLINE — MCQ created last 7 days (auto-fill 0)
-    // =====================================================
+    // =========================
+    // 2) SPARKLINE MCQ (7 ngày)
+    // =========================
     const today = new Date();
     const past7 = new Date(Date.now() - 6 * 86400000);
 
@@ -67,7 +77,7 @@ export async function GET(req: NextRequest) {
       .gte("created_at", past7.toISOString())
       .order("created_at", { ascending: true });
 
-    const sparkline: { date: string; value: number }[] = [];
+    const sparklineMcq: { date: string; value: number }[] = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(today.getTime() - (6 - i) * 86400000);
       const dateStr = d.toISOString().substring(0, 10);
@@ -77,51 +87,89 @@ export async function GET(req: NextRequest) {
           (x) => x.created_at.substring(0, 10) === dateStr
         ).length || 0;
 
-      sparkline.push({ date: dateStr, value: count });
+      sparklineMcq.push({ date: dateStr, value: count });
     }
 
-    // =====================================================
-    // 2) BLOOM LEVEL CHART — LLO (auto-fill 0)
-    // =====================================================
-    const bloomLevels = [
-      "Remember",
-      "Understand",
-      "Apply",
-      "Analyze",
-      "Evaluate",
-      "Create",
-    ];
-
+    // =========================
+    // 3) BLOOM LLO (llos.bloom_suggested)
+    // =========================
     const { data: bloomRawLlo } = await supabase
       .from("llos")
       .select("bloom_suggested")
       .eq("owner_id", userId);
 
-    const bloomCountLlo = bloomLevels.map((level) => ({
-      name: level,
-      value: bloomRawLlo?.filter((x) => x.bloom_suggested === level).length ?? 0,
-    }));
+    const bloomCountLlo = BLOOM_LEVELS.map((level) => {
+      const target = level.toLowerCase();
+      const value =
+        bloomRawLlo?.filter((x) => {
+          const v = (x.bloom_suggested || "").toLowerCase().trim();
+          return v === target;
+        }).length ?? 0;
+      return { name: level, value };
+    });
 
-    // =====================================================
-    // 3) BLOOM LEVEL CHART — MCQ (auto-fill 0)
-    // =====================================================
+    const totalLlo = bloomRawLlo?.length ?? 0;
+    const knownLlo = bloomCountLlo.reduce((s, x) => s + x.value, 0);
+    const othersLlo = totalLlo - knownLlo;
+    if (othersLlo > 0) {
+      bloomCountLlo.push({ name: "Khác / Chưa gán", value: othersLlo });
+    }
+
+    // =========================
+    // 4) BLOOM AU (assessment_units.bloom_min)
+    // =========================
+    const { data: bloomRawAu } = await supabase
+      .from("assessment_units")
+      .select("bloom_min")
+      .eq("owner_id", userId);
+
+    const bloomCountAu = BLOOM_LEVELS.map((level) => {
+      const target = level.toLowerCase();
+      const value =
+        bloomRawAu?.filter((x) => {
+          const v = (x.bloom_min || "").toLowerCase().trim();
+          return v === target;
+        }).length ?? 0;
+      return { name: level, value };
+    });
+
+    const totalAu = bloomRawAu?.length ?? 0;
+    const knownAu = bloomCountAu.reduce((s, x) => s + x.value, 0);
+    const othersAu = totalAu - knownAu;
+    if (othersAu > 0) {
+      bloomCountAu.push({ name: "Khác / Chưa gán", value: othersAu });
+    }
+
+    // =========================
+    // 5) BLOOM MCQ (mcq_items.bloom_level)
+    // =========================
     const { data: bloomRawMcq } = await supabase
       .from("mcq_items")
       .select("bloom_level")
       .eq("owner_id", userId);
 
-    const bloomCountMcq = bloomLevels.map((level) => ({
-      name: level,
-      value: bloomRawMcq?.filter((x) => x.bloom_level === level).length ?? 0,
-    }));
+    const bloomCountMcq = BLOOM_LEVELS.map((level) => {
+      const target = level.toLowerCase();
+      const value =
+        bloomRawMcq?.filter((x) => {
+          const v = (x.bloom_level || "").toLowerCase().trim();
+          return v === target;
+        }).length ?? 0;
+      return { name: level, value };
+    });
 
-    // =====================================================
-    // RESPONSE – FLAT SHAPE ĐÚNG VỚI DashboardPage
-    // =====================================================
+    const totalMcq = bloomRawMcq?.length ?? 0;
+    const knownMcq = bloomCountMcq.reduce((s, x) => s + x.value, 0);
+    const othersMcq = totalMcq - knownMcq;
+    if (othersMcq > 0) {
+      bloomCountMcq.push({ name: "Khác / Chưa gán", value: othersMcq });
+    }
+
+    // =========================
+    // 6) RESPONSE
+    // =========================
     return NextResponse.json({
       ok: true,
-
-      // các trường mà DashboardPage đang đọc
       courseCount: courseCount ?? 0,
       lessonCount: lessonCount ?? 0,
       lloCount: lloCount ?? 0,
@@ -130,8 +178,9 @@ export async function GET(req: NextRequest) {
       mcqCount: mcqCount ?? 0,
 
       bloomLlo: bloomCountLlo,
+      bloomAu: bloomCountAu,
       bloomMcq: bloomCountMcq,
-      sparklineMcq: sparkline,
+      sparklineMcq,
     });
   } catch (err) {
     console.error("Error /api/dashboard/stats:", err);
