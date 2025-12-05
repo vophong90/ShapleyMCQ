@@ -7,15 +7,30 @@ import Sparkline from "@/components/charts/Sparkline";
 import BarMini from "@/components/charts/BarMini";
 import DonutMini from "@/components/charts/DonutMini";
 
+type DashboardStats = {
+  courseCount: number;
+  lessonCount: number;
+  lloCount: number;
+  auCount: number;
+  misCount: number;
+  mcqCount: number;
+  bloomLlo?: any;
+  bloomMcq?: any;
+  sparklineMcq?: any;
+  // nếu API còn field khác thì cứ giữ nguyên, ở đây chỉ khai báo tối thiểu
+};
+
 export default function DashboardPage() {
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       // 1) Lấy access_token từ Supabase client
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
       if (!session?.access_token) {
         console.error("Không có session Supabase");
@@ -25,7 +40,7 @@ export default function DashboardPage() {
 
       const accessToken = session.access_token;
 
-      // 2) Gửi token lên API /auth/session để lấy user_id
+      // 2) Gửi token lên API /auth/session để lấy user_id (qua header Authorization)
       const r = await fetch("/api/auth/session", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
@@ -44,17 +59,17 @@ export default function DashboardPage() {
         headers: { Authorization: userHeader },
       });
 
-      const statsJson = await res1.json();
+      const statsJson = await res1.json().catch(() => null);
 
       // 4) Lấy PROJECTS
       const res2 = await fetch("/api/dashboard/projects?page=1&limit=5", {
         headers: { Authorization: userHeader },
       });
 
-      const projJson = await res2.json();
+      const projJson = await res2.json().catch(() => null);
 
-      setStats(statsJson);
-      setProjects(projJson.items ?? []);   // items mới đúng!
+      setStats(statsJson || null);
+      setProjects(projJson?.items ?? []);
       setLoading(false);
     }
 
@@ -65,48 +80,108 @@ export default function DashboardPage() {
     return <p className="p-4 text-slate-500">Đang tải Dashboard…</p>;
   }
 
+  // Fallback an toàn nếu stats null
+  const safeStats: DashboardStats = {
+    courseCount: stats?.courseCount ?? 0,
+    lessonCount: stats?.lessonCount ?? 0,
+    lloCount: stats?.lloCount ?? 0,
+    auCount: stats?.auCount ?? 0,
+    misCount: stats?.misCount ?? 0,
+    mcqCount: stats?.mcqCount ?? 0,
+    bloomLlo: stats?.bloomLlo,
+    bloomMcq: stats?.bloomMcq,
+    sparklineMcq: stats?.sparklineMcq,
+  };
+
+  const hasBloomLlo =
+    Array.isArray(safeStats.bloomLlo) && safeStats.bloomLlo.length > 0;
+  const hasBloomMcq =
+    Array.isArray(safeStats.bloomMcq) && safeStats.bloomMcq.length > 0;
+  const hasSparklineMcq =
+    Array.isArray(safeStats.sparklineMcq) &&
+    safeStats.sparklineMcq.length > 0;
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
-
       {/* ======= HÀNG KPI ========= */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <KpiCard label="Học phần" value={stats.courseCount} />
-        <KpiCard label="Bài học" value={stats.lessonCount} />
+        <KpiCard label="Học phần" value={safeStats.courseCount} />
+        <KpiCard label="Bài học" value={safeStats.lessonCount} />
         <KpiCard
           label="LLO"
-          value={stats.lloCount}
-          chart={<BarMini data={stats.bloomLlo} />}
+          value={safeStats.lloCount}
+          chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined}
         />
-        <KpiCard label="Assessment Units" value={stats.auCount} />
-        <KpiCard label="Misconceptions" value={stats.misCount} />
+        <KpiCard label="Assessment Units" value={safeStats.auCount} />
+        <KpiCard label="Misconceptions" value={safeStats.misCount} />
         <KpiCard
           label="MCQ Items"
-          value={stats.mcqCount}
-          chart={<Sparkline data={stats.sparklineMcq} />}
+          value={safeStats.mcqCount}
+          chart={
+            hasSparklineMcq ? (
+              <Sparkline data={safeStats.sparklineMcq} />
+            ) : undefined
+          }
         />
       </div>
 
-      {/* ======= HÀNG MODULES ========= */}
-      <div className="grid md:grid-cols-3 gap-4">
-        <ModuleCard
-          title="1. LLO & Context"
-          desc="Quản lý LLO, Bloom, lesson mapping"
-          href="/wizard/context"
-          chart={<BarMini data={stats.bloomLlo} />}
-        />
+      {/* ======= HÀNG MODULES – 5 BƯỚC WIZARD ========= */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 mb-2">
+          Quy trình 5 bước xây dựng ngân hàng MCQ
+        </h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Mỗi bước hoạt động độc lập – bạn có thể vào bất cứ bước nào, bất cứ
+          lúc nào.
+        </p>
 
-        <ModuleCard
-          title="2. AU & Misconceptions"
-          desc="Quản lý Assessment Units và Misconceptions"
-          href="/wizard/au"
-        />
+        <div className="grid md:grid-cols-3 gap-4">
+          {/* Bước 1 */}
+          <ModuleCard
+            title="Bước 1. Context & LLO"
+            desc="Thiết lập học phần, bài học và LLO; gắn Bloom, level, bối cảnh."
+            href="/wizard/context"
+            chart={
+              hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined
+            }
+          />
 
-        <ModuleCard
-          title="3. MCQ Bank"
-          desc="Sinh MCQ, đánh giá NBME/USMLE, Shapley"
-          href="/wizard/mcq"
-          chart={<DonutMini data={stats.bloomMcq} />}
-        />
+          {/* Bước 2 */}
+          <ModuleCard
+            title="Bước 2. Assessment Units"
+            desc="Sinh và quản lý Assessment Units từ LLO, chuẩn bị nền cho Mis & MCQ."
+            href="/wizard/au"
+          />
+
+          {/* Bước 3 */}
+          <ModuleCard
+            title="Bước 3. Misconceptions"
+            desc="Sinh Misconceptions từ AU bằng GPT, duyệt và quản lý lỗi nhận thức."
+            href="/wizard/misconcepts"
+          />
+
+          {/* Bước 4 */}
+          <ModuleCard
+            title="Bước 4. MCQ Generator"
+            desc="Sinh bộ câu hỏi MCQ từ AU + Mis đã duyệt; thiết kế theo blueprint."
+            href="/wizard/mcq"
+            chart={
+              hasBloomMcq ? <DonutMini data={safeStats.bloomMcq} /> : undefined
+            }
+          />
+
+          {/* Bước 5 */}
+          <ModuleCard
+            title="Bước 5. MCQ Analysis"
+            desc="Phân tích bộ đề: độ khó, phân biệt, distrator, Shapley... (đang phát triển)."
+            href="/wizard/mcq-analysis"
+            chart={
+              hasSparklineMcq ? (
+                <Sparkline data={safeStats.sparklineMcq} />
+              ) : undefined
+            }
+          />
+        </div>
       </div>
 
       {/* ======= PROJECTS ========= */}
@@ -139,7 +214,9 @@ export default function DashboardPage() {
                     <td className="py-2">{p.lessons?.title ?? "-"}</td>
                     <td className="py-2">{p.progress ?? 0}%</td>
                     <td className="py-2">
-                      {new Date(p.updated_at).toLocaleDateString("vi-VN")}
+                      {p.updated_at
+                        ? new Date(p.updated_at).toLocaleDateString("vi-VN")
+                        : "-"}
                     </td>
                     <td className="py-2">
                       <a
@@ -159,7 +236,6 @@ export default function DashboardPage() {
     </div>
   );
 }
-
 
 /* ======================================
    COMPONENTS
@@ -194,15 +270,16 @@ function ModuleCard({
   chart?: React.ReactNode;
 }) {
   return (
-    <div className="bg-white rounded-xl p-4 border shadow-sm">
-      <h3 className="text-sm font-semibold mb-1">{title}</h3>
-      <p className="text-xs text-slate-600 mb-2">{desc}</p>
-
-      {chart && <div className="mb-3">{chart}</div>}
+    <div className="bg-white rounded-xl p-4 border shadow-sm flex flex-col justify-between">
+      <div>
+        <h3 className="text-sm font-semibold mb-1">{title}</h3>
+        <p className="text-xs text-slate-600 mb-3">{desc}</p>
+        {chart && <div className="mb-3">{chart}</div>}
+      </div>
 
       <a
         href={href}
-        className="inline-block px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white"
+        className="inline-block mt-1 px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white"
       >
         Mở →
       </a>
