@@ -4,12 +4,12 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { stem } = body;
+    const body = await req.json().catch(() => null);
+    const stem = body?.stem as string | undefined;
 
-    if (!stem || typeof stem !== "string") {
+    if (!stem || !stem.trim()) {
       return NextResponse.json(
-        { error: "Thiếu stem để refine." },
+        { error: "Thiếu stem cần refine." },
         { status: 400 }
       );
     }
@@ -17,50 +17,55 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.OPENAI_API_KEY;
     const model = process.env.OPENAI_MCQ_MODEL?.trim() || "gpt-5.1";
 
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY chưa được cấu hình trên server." },
+        { status: 500 }
+      );
+    }
+
     const prompt = `
-Bạn là chuyên gia NBME Item-Writing với 20 năm kinh nghiệm.
+Bạn là chuyên gia viết câu hỏi NBME/USMLE.
 
-Hãy tinh chỉnh STEM sau:
-- Rõ ràng hơn, chính xác hơn
-- Tập trung vào ONE BEST ANSWER
-- Không thêm thông tin mới
-- Không thay đổi bản chất tình huống lâm sàng
-- Viết theo phong cách USMLE
+Hãy viết lại stem sau đây sao cho:
+- Rõ ràng hơn, mạch lạc hơn.
+- Giữ nguyên ý nghĩa và mức độ khó.
+- Không thay đổi đáp án đúng tiềm ẩn.
+- Ngắn gọn, không lan man.
 
-Chỉ trả về duy nhất 1 chuỗi văn bản là stem đã refine.
+Chỉ trả về stem mới, KHÔNG giải thích, KHÔNG thêm ghi chú.
 
-STEM:
-"${stem}"
+Stem gốc:
+${stem}
 `.trim();
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model,
-        input: prompt
-      })
+        input: prompt,
+      }),
     });
 
     const data = await response.json();
-    const text = data.output_text;
 
+    const text: string | undefined = (data as any)?.output_text;
     if (!text) {
       return NextResponse.json(
-        { error: "GPT không trả về refined stem." },
+        { error: "GPT không trả về kết quả refine stem." },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      refined: text.trim()
-    });
+    return NextResponse.json({ refined: text.trim() });
   } catch (err: any) {
+    console.error("refine-stem error:", err);
     return NextResponse.json(
-      { error: "Lỗi server refine stem", detail: String(err) },
+      { error: "Lỗi server khi refine stem.", detail: String(err) },
       { status: 500 }
     );
   }
