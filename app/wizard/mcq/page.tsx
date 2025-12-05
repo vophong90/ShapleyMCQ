@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 type AU = {
   id: string;
   text: string;
+  llo_id: string | null;
 };
 
 type Miscon = {
@@ -29,12 +30,10 @@ type NbmeResult = {
     overall_score: number;
     summary: string;
     dimensions: {
-      stem_clarity?: { score: number; comment: string };
-      one_best_answer?: { score: number; comment: string };
-      distractor_quality?: { score: number; comment: string };
-      clinical_relevance?: { score: number; comment: string };
-      technical_flaws?: { score: number; comment: string };
-      [key: string]: any;
+      [key: string]: {
+        score: number;
+        comment: string;
+      };
     };
     suggestions: string;
     [key: string]: any;
@@ -43,12 +42,12 @@ type NbmeResult = {
 
 type EduFitResult = {
   inferred_bloom: string;
-  bloom_match: string;   // "good" | "too_low" | "too_high"
-  level_fit: string;     // "good" | "too_easy" | "too_hard"
+  bloom_match: string; // "good" | "too_low" | "too_high" | string
+  level_fit: string;   // "good" | "too_easy" | "too_hard" | string
   summary: string;
   llo_coverage: {
     llo: string;
-    coverage: string;    // "direct" | "indirect" | "none"
+    coverage: string; // "direct" | "indirect" | "none" | string
     comment: string;
   }[];
   recommendations: string[];
@@ -64,36 +63,65 @@ export default function MCQWizard() {
 
   const [nbmeResult, setNbmeResult] = useState<NbmeResult | null>(null);
   const [nbmeLoading, setNbmeLoading] = useState(false);
+
   const [context, setContext] = useState<any | null>(null);
+
   const [eduFitResult, setEduFitResult] = useState<EduFitResult | null>(null);
   const [eduLoading, setEduLoading] = useState(false);
 
-
-  // Load AU list
+  // ===== Load context từ localStorage =====
   useEffect(() => {
-    loadAUs();
-    // Lấy context từ bước 1 (đã lưu ở localStorage)
-    const saved = typeof window !== "undefined"
-      ? localStorage.getItem("shapleymcq_context")
-      : null;
-    if (saved) {
-      try {
-        setContext(JSON.parse(saved));
-      } catch {
-        // ignore
-      }
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("shapleymcq_context");
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved);
+      setContext(parsed);
+    } catch {
+      // ignore
     }
   }, []);
 
+  // ===== Load AU list khi có context =====
+  useEffect(() => {
+    loadAUs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context]);
+
   async function loadAUs() {
-    const { data, error } = await supabase
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    let query = supabase
       .from("assessment_units")
-      .select("id, text")
-      .order("created_at", { ascending: true });
-    if (!error && data) setAus(data);
+      .select("id, core_statement, llo_id, course_id, lesson_id, owner_id")
+      .eq("owner_id", user.id);
+
+    if (context?.course_id) {
+      query = query.eq("course_id", context.course_id);
+    }
+    if (context?.lesson_id) {
+      query = query.eq("lesson_id", context.lesson_id);
+    }
+
+    const { data, error } = await query.order("created_at", {
+      ascending: true,
+    });
+
+    if (!error && data) {
+      setAus(
+        (data as any[]).map((row) => ({
+          id: row.id,
+          text: row.core_statement as string,
+          llo_id: (row.llo_id as string | null) ?? null,
+        }))
+      );
+    }
   }
 
-  // Load misconceptions
+  // ===== Load misconceptions cho AU =====
   async function loadMiscons(au: AU) {
     const { data, error } = await supabase
       .from("misconceptions")
@@ -101,7 +129,7 @@ export default function MCQWizard() {
       .eq("au_id", au.id);
 
     if (!error && data) {
-      setMiscons(data);
+      setMiscons(data as Miscon[]);
     } else {
       setMiscons([]);
     }
@@ -111,15 +139,17 @@ export default function MCQWizard() {
     setSelectedAU(au);
     setMcq(null);
     setNbmeResult(null);
+    setEduFitResult(null);
     loadMiscons(au);
   }
 
-  // Generate MCQ
+  // ===== Generate MCQ từ GPT =====
   async function generateMCQ() {
     if (!selectedAU) return;
 
     setLoading(true);
     setNbmeResult(null);
+    setEduFitResult(null);
 
     const res = await fetch("/api/mcq-gen", {
       method: "POST",
@@ -127,32 +157,36 @@ export default function MCQWizard() {
       body: JSON.stringify({
         au_text: selectedAU.text,
         misconceptions: miscons,
-        specialty_name: "Y học cổ truyền",
-        learner_level: "Sinh viên đại học",
-        bloom_level: "Analyze",
+        specialty_name: context?.specialty_name || "Y học cổ truyền",
+        learner_level: context?.learner_level || "Sinh viên đại học",
+        bloom_level: context?.bloom_level || "Analyze",
       }),
     });
 
     const json = await res.json();
     setLoading(false);
 
-    if (json.error) {
-      alert(json.error);
+    if (!res.ok || json.error) {
+      alert(json.error || "Lỗi sinh MCQ từ GPT.");
       return;
     }
 
-    setMcq(json);
+    setMcq(json as MCQ);
   }
 
-  // Update MCQ fields
+  // ===== Update MCQ fields =====
   function updateMCQ(key: keyof MCQ, value: any) {
-    setMcq((prev: any) => ({
-      ...prev,
-      [key]: value,
-    }));
+    setMcq((prev) =>
+      prev
+        ? {
+            ...prev,
+            [key]: value,
+          }
+        : prev
+    );
   }
 
-  // Refine Stem
+  // ===== Refine Stem =====
   async function refineStem() {
     if (!mcq) return;
 
@@ -165,10 +199,15 @@ export default function MCQWizard() {
     });
 
     const json = await res.json();
+    if (!res.ok || json.error) {
+      alert(json.error || "Lỗi refine stem.");
+      return;
+    }
+
     if (json.refined) updateMCQ("stem", json.refined);
   }
 
-  // Refine individual distractor
+  // ===== Refine individual distractor =====
   async function refineDistractor(i: number) {
     if (!mcq) return;
 
@@ -181,6 +220,11 @@ export default function MCQWizard() {
     });
 
     const json = await res.json();
+    if (!res.ok || json.error) {
+      alert(json.error || "Lỗi refine distractor.");
+      return;
+    }
+
     if (json.refined) {
       const arr = [...mcq.distractors];
       arr[i] = json.refined;
@@ -188,29 +232,35 @@ export default function MCQWizard() {
     }
   }
 
-  // NBME/USMLE STYLE CHECK
+  // ===== NBME / USMLE STYLE CHECK =====
   async function runNbmeCheck() {
     if (!mcq) return;
     setNbmeLoading(true);
+    setNbmeResult(null);
 
     const res = await fetch("/api/mcqs/nbme-check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mcq),
+      body: JSON.stringify({
+        stem: mcq.stem,
+        correct_answer: mcq.correct_answer,
+        distractors: mcq.distractors,
+        explanation: mcq.explanation,
+      }),
     });
 
     const json = await res.json();
     setNbmeLoading(false);
 
-    if (json.error) {
-      alert(json.error);
+    if (!res.ok || json.error) {
+      alert(json.error || "Lỗi NBME Style Check.");
       return;
     }
 
-    setNbmeResult(json);
+    setNbmeResult(json as NbmeResult);
   }
 
-    // EDUCATIONAL FIT CHECK
+  // ===== EDUCATIONAL FIT CHECK =====
   async function runEduFitCheck() {
     if (!mcq || !context) return;
     setEduLoading(true);
@@ -234,56 +284,89 @@ export default function MCQWizard() {
     const json = await res.json();
     setEduLoading(false);
 
-    if (json.error) {
-      alert(json.error);
+    if (!res.ok || json.error) {
+      alert(json.error || "Lỗi Educational Fit Check.");
       return;
     }
 
-    setEduFitResult(json);
+    setEduFitResult(json as EduFitResult);
   }
 
-  // Save MCQ to DB
+  // ===== Save MCQ to DB =====
   async function saveMCQ() {
     if (!selectedAU || !mcq) return;
 
     setSaving(true);
 
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData?.user?.id;
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const userId = user?.id;
 
-    const { data, error } = await supabase
-      .from("mcq_items")
-      .insert({
-        au_id: selectedAU.id,
-        owner_id: userId,
-        stem: mcq.stem,
-        correct_answer: mcq.correct_answer,
-        explanation: mcq.explanation,
-      })
-      .select("id")
-      .single();
-
-    if (error) {
-      alert("Lưu MCQ thất bại");
+    if (!userId) {
+      alert("Chưa đăng nhập.");
       setSaving(false);
       return;
     }
 
-    const mcqId = data.id;
+    try {
+      // Insert vào mcq_items
+      const { data, error } = await supabase
+        .from("mcq_items")
+        .insert({
+          owner_id: userId,
+          au_id: selectedAU.id,
+          course_id: context?.course_id ?? null,
+          primary_specialty_id: context?.specialty_id ?? null,
+          stem: mcq.stem,
+          bloom_level: null, // nếu sau này có inferred_bloom riêng thì set
+          visibility: "private",
+          status: "draft",
+          learner_level: context?.learner_level ?? null,
+          target_bloom: context?.bloom_level ?? null,
+          usmle_nbme_score: nbmeResult ?? null,
+          level_fit_score: eduFitResult ?? null,
+          llo_ids: selectedAU.llo_id ? [selectedAU.llo_id] : null,
+        })
+        .select("id")
+        .single();
 
-    const options = [
-      { mcq_id: mcqId, text: mcq.correct_answer, is_correct: true },
-      ...mcq.distractors.map((d: string) => ({
-        mcq_id: mcqId,
-        text: d,
-        is_correct: false,
-      })),
-    ];
+      if (error || !data) {
+        console.error(error);
+        alert("Lưu MCQ thất bại (mcq_items).");
+        setSaving(false);
+        return;
+      }
 
-    await supabase.from("mcq_options").insert(options);
+      const mcqId = data.id as string;
 
-    setSaving(false);
-    alert("MCQ đã được lưu!");
+      // Link LLO nếu có
+      if (selectedAU.llo_id) {
+        await supabase.from("mcq_item_llos").insert({
+          mcq_item_id: mcqId,
+          llo_id: selectedAU.llo_id,
+        });
+      }
+
+      // Insert options
+      const options = [
+        { mcq_id: mcqId, text: mcq.correct_answer, is_correct: true },
+        ...mcq.distractors.map((d: string) => ({
+          mcq_id: mcqId,
+          text: d,
+          is_correct: false,
+        })),
+      ];
+
+      await supabase.from("mcq_options").insert(options);
+
+      alert("MCQ đã được lưu!");
+    } catch (e) {
+      console.error(e);
+      alert("Lỗi server khi lưu MCQ.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -320,7 +403,7 @@ export default function MCQWizard() {
               <button
                 onClick={generateMCQ}
                 disabled={loading}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-60"
               >
                 {loading ? "Đang sinh..." : "Generate MCQ (GPT)"}
               </button>
@@ -414,7 +497,7 @@ export default function MCQWizard() {
                     <button
                       onClick={runNbmeCheck}
                       disabled={nbmeLoading}
-                      className="px-3 py-1 rounded-lg bg-purple-600 text-white text-sm hover:bg-purple-700"
+                      className="px-3 py-1 rounded-lg bg-purple-600 text-white text-sm hover:bg-purple-700 disabled:opacity-60"
                     >
                       {nbmeLoading
                         ? "Đang đánh giá…"
@@ -493,18 +576,11 @@ export default function MCQWizard() {
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
 
-                      {/* EDUCATIONAL FIT CHECKER */}
+                {/* EDUCATIONAL FIT CHECKER */}
                 <div className="bg-white p-4 rounded-xl shadow space-y-3">
                   <div className="flex justify-between items-center">
-                    <h3 className="font-semibold">
-                      Educational Fit Checker
-                    </h3>
+                    <h3 className="font-semibold">Educational Fit Checker</h3>
                     <button
                       onClick={runEduFitCheck}
                       disabled={eduLoading || !context}
@@ -559,12 +635,8 @@ export default function MCQWizard() {
                       </div>
 
                       <div>
-                        <div className="font-semibold mb-1">
-                          Tóm tắt:
-                        </div>
-                        <p className="text-gray-700">
-                          {eduFitResult.summary}
-                        </p>
+                        <div className="font-semibold mb-1">Tóm tắt:</div>
+                        <p className="text-gray-700">{eduFitResult.summary}</p>
                       </div>
 
                       <div>
@@ -574,14 +646,10 @@ export default function MCQWizard() {
                         <div className="space-y-1 max-h-48 overflow-y-auto border rounded-md p-2 bg-slate-50">
                           {eduFitResult.llo_coverage.map((c, i) => (
                             <div key={i} className="text-xs">
-                              <div className="font-semibold">
-                                • {c.llo}
-                              </div>
+                              <div className="font-semibold">• {c.llo}</div>
                               <div>
                                 Coverage:{" "}
-                                <span className="italic">
-                                  {c.coverage}
-                                </span>
+                                <span className="italic">{c.coverage}</span>
                                 {" – "}
                                 {c.comment}
                               </div>
@@ -603,6 +671,11 @@ export default function MCQWizard() {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* RIGHT PANEL */}
       {selectedAU && (
@@ -611,8 +684,8 @@ export default function MCQWizard() {
 
           <button
             onClick={saveMCQ}
-            disabled={saving}
-            className="bg-green-600 w-full text-white px-4 py-2 rounded-lg hover:bg-green-700"
+            disabled={saving || !mcq}
+            className="bg-green-600 w-full text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-60"
           >
             {saving ? "Đang lưu…" : "Lưu câu MCQ"}
           </button>
