@@ -31,7 +31,7 @@ type MCQDetail = {
   distractors: string[];
 };
 
-/** SIMULATION TYPES (giống bản cũ) */
+/** SIMULATION TYPES */
 type SimOption = {
   label: string; // A, B, C, D
   text: string;
@@ -92,13 +92,13 @@ type MCQCardState = {
 
 const PAGE = 1000;
 
-// ---------- HÀM TÍNH SHAPLEY (dùng lại logic cũ) ----------
+// ---------- HÀM TÍNH SHAPLEY ----------
 function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
   const distractorLabels = sim.options
     .filter((o) => !o.is_correct)
     .map((o) => o.label);
 
-  // Thứ tự B, C, D...
+  // Thứ tự B, C, D, E, F...
   const allLabels = ["B", "C", "D", "E", "F"];
   const orderedLabels = allLabels.filter((l) => distractorLabels.includes(l));
 
@@ -113,7 +113,8 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
   for (const row of sim.response_matrix) {
     if (!row.is_correct) {
       totalWrongAll++;
-      wrongCounts[row.chosen_option] = (wrongCounts[row.chosen_option] || 0) + 1;
+      wrongCounts[row.chosen_option] =
+        (wrongCounts[row.chosen_option] || 0) + 1;
       if (lowAbility.has(row.persona)) {
         totalWrongLow++;
         wrongCountsNovice[row.chosen_option] =
@@ -251,6 +252,7 @@ export default function MCQSimulateMultiPage() {
   useEffect(() => {
     async function init() {
       setInitLoading(true);
+
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id ?? null;
       setUserId(uid);
@@ -477,7 +479,10 @@ export default function MCQSimulateMultiPage() {
   }
 
   // ----- helpers chỉnh sửa card -----
-  function updateCard(id: string, updater: (card: MCQCardState) => MCQCardState) {
+  function updateCard(
+    id: string,
+    updater: (card: MCQCardState) => MCQCardState
+  ) {
     setCards((prev) => prev.map((c) => (c.id === id ? updater(c) : c)));
   }
 
@@ -492,7 +497,12 @@ export default function MCQSimulateMultiPage() {
       return;
     }
 
-    updateCard(id, (c) => ({ ...c, simLoading: true, simResult: null, shapleyRows: null }));
+    updateCard(id, (c) => ({
+      ...c,
+      simLoading: true,
+      simResult: null,
+      shapleyRows: null,
+    }));
 
     const res = await fetch("/api/mcqs/simulate", {
       method: "POST",
@@ -568,7 +578,14 @@ export default function MCQSimulateMultiPage() {
     const card = cards.find((c) => c.id === id);
     if (!card || !userId) return;
 
-    const { stem, correct_answer, explanation, distractors, simResult, shapleyRows } = card;
+    const {
+      stem,
+      correct_answer,
+      explanation,
+      distractors,
+      simResult,
+      shapleyRows,
+    } = card;
 
     if (!stem.trim() || !correct_answer.trim() || distractors.length === 0) {
       alert("Vui lòng đảm bảo có stem, đáp án đúng và ít nhất 1 distractor.");
@@ -627,7 +644,9 @@ export default function MCQSimulateMultiPage() {
         })),
       ];
 
-      const { error: insError } = await supabase.from("mcq_options").insert(rows);
+      const { error: insError } = await supabase
+        .from("mcq_options")
+        .insert(rows);
       if (insError) {
         console.error("Error inserting mcq_options:", insError.message);
         alert("Lỗi khi lưu mcq_options.");
@@ -816,8 +835,8 @@ export default function MCQSimulateMultiPage() {
       {cards.length > 0 && (
         <div className="space-y-6">
           {cards.map((card) => {
-            const badDistractors =
-              card.shapleyRows?.filter((r) => r.share_pct < 10) || [];
+            const sim = card.simResult;
+            const shapRows = card.shapleyRows;
 
             return (
               <div
@@ -832,7 +851,7 @@ export default function MCQSimulateMultiPage() {
                     </div>
                     <p className="text-[11px] text-slate-500 max-w-xl">
                       Chỉnh sửa stem, đáp án, distractors; sau đó chạy mô phỏng
-                      Monte Carlo & Shapley cho riêng câu này.
+                      Monte Carlo &amp; Shapley cho riêng câu này.
                     </p>
                   </div>
 
@@ -945,7 +964,9 @@ export default function MCQSimulateMultiPage() {
                       </div>
                       <div className="space-y-2">
                         {card.distractors.map((d, idx) => {
-                          const label = String.fromCharCode("B".charCodeAt(0) + idx);
+                          const label = String.fromCharCode(
+                            "B".charCodeAt(0) + idx
+                          );
                           const shap = card.shapleyRows?.find(
                             (r) => r.label === label
                           );
@@ -1007,7 +1028,7 @@ export default function MCQSimulateMultiPage() {
                 </div>
 
                 {/* SIM RESULT */}
-                {card.simResult && (
+                {sim && (
                   <div className="space-y-4">
                     <div>
                       <div className="font-semibold text-slate-800 mb-1">
@@ -1028,7 +1049,7 @@ export default function MCQSimulateMultiPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {card.simResult.accuracy_summary.map((r) => (
+                          {sim.accuracy_summary.map((r) => (
                             <tr key={r.persona}>
                               <td className="border px-2 py-1">{r.persona}</td>
                               <td className="border px-2 py-1 text-right">
@@ -1054,7 +1075,7 @@ export default function MCQSimulateMultiPage() {
                               <th className="border px-2 py-1 text-left">
                                 Persona
                               </th>
-                              {card.simResult.options.map((o) => (
+                              {sim.options.map((o) => (
                                 <th
                                   key={o.label}
                                   className="border px-2 py-1 text-right"
@@ -1070,10 +1091,10 @@ export default function MCQSimulateMultiPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {card.simResult.personas.map((p) => (
+                            {sim.personas.map((p) => (
                               <tr key={p.name}>
                                 <td className="border px-2 py-1">{p.name}</td>
-                                {card.simResult.options.map((o) => (
+                                {sim.options.map((o) => (
                                   <td
                                     key={o.label}
                                     className="border px-2 py-1 text-right"
@@ -1094,7 +1115,7 @@ export default function MCQSimulateMultiPage() {
                 )}
 
                 {/* SHAPLEY TABLE */}
-                {card.shapleyRows && (
+                {shapRows && (
                   <div className="space-y-3">
                     <div className="font-semibold text-slate-800 mb-1">
                       Shapley Distractor Evaluator
@@ -1121,17 +1142,17 @@ export default function MCQSimulateMultiPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {card.shapleyRows.map((r) => {
+                          {shapRows.map((r) => {
                             const isWeak = r.share_pct < 10;
                             return (
                               <tr
                                 key={r.label}
-                                className={
-                                  isWeak ? "bg-rose-50" : "bg-white"
-                                }
+                                className={isWeak ? "bg-rose-50" : "bg-white"}
                               >
                                 <td className="border px-2 py-1 align-top">
-                                  <div className="font-semibold">{r.label}</div>
+                                  <div className="font-semibold">
+                                    {r.label}
+                                  </div>
                                   <div className="text-gray-700 whitespace-pre-wrap">
                                     {r.text}
                                   </div>
@@ -1155,7 +1176,7 @@ export default function MCQSimulateMultiPage() {
                       </table>
                     </div>
 
-                    {card.shapleyRows.map((r) => (
+                    {shapRows.map((r) => (
                       <div
                         key={r.label + "-rec"}
                         className={`border rounded-lg p-2 text-xs ${
