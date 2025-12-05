@@ -15,6 +15,7 @@ type DashboardStats = {
   misCount: number;
   mcqCount: number;
   bloomLlo?: any;
+  bloomAu?: any;
   bloomMcq?: any;
   sparklineMcq?: any;
   // nếu API còn field khác thì cứ giữ nguyên, ở đây chỉ khai báo tối thiểu
@@ -89,12 +90,15 @@ export default function DashboardPage() {
     misCount: stats?.misCount ?? 0,
     mcqCount: stats?.mcqCount ?? 0,
     bloomLlo: stats?.bloomLlo,
+    bloomAu: stats?.bloomAu,
     bloomMcq: stats?.bloomMcq,
     sparklineMcq: stats?.sparklineMcq,
   };
 
   const hasBloomLlo =
     Array.isArray(safeStats.bloomLlo) && safeStats.bloomLlo.length > 0;
+  const hasBloomAu =
+    Array.isArray(safeStats.bloomAu) && safeStats.bloomAu.length > 0;
   const hasBloomMcq =
     Array.isArray(safeStats.bloomMcq) && safeStats.bloomMcq.length > 0;
   const hasSparklineMcq =
@@ -112,7 +116,12 @@ export default function DashboardPage() {
           value={safeStats.lloCount}
           chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined}
         />
-        <KpiCard label="Assessment Units" value={safeStats.auCount} />
+        <KpiCard 
+          label="Assessment Units" 
+          value={safeStats.auCount} 
+          chart={hasBloomAu ? 
+          <BarMini data={safeStats.bloomAu} /> : undefined} 
+          />
         <KpiCard label="Misconceptions" value={safeStats.misCount} />
         <KpiCard
           label="MCQ Items"
@@ -151,7 +160,8 @@ export default function DashboardPage() {
             title="Bước 2. Assessment Units"
             desc="Sinh và quản lý Assessment Units từ LLO, chuẩn bị nền cho Mis & MCQ."
             href="/wizard/au"
-          />
+            chart={hasBloomAu ? <BarMini data={safeStats.bloomAu} /> : undefined}
+            />
 
           {/* Bước 3 */}
           <ModuleCard
