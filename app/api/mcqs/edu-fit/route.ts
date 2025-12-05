@@ -2,9 +2,44 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+type EduFitPayload = {
+  stem: string;
+  correct_answer: string;
+  distractors: string[];
+  explanation: string;
+  learner_level?: string;
+  bloom_level?: string;
+  llos_text?: string;
+  specialty_name?: string;
+};
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await req.json().catch(() => null)) as EduFitPayload | null;
+
+    if (
+      !body ||
+      !body.stem?.trim() ||
+      !body.correct_answer?.trim() ||
+      !Array.isArray(body.distractors) ||
+      body.distractors.length === 0
+    ) {
+      return NextResponse.json(
+        { error: "Thiếu dữ liệu MCQ cho Educational Fit (stem, correct_answer, distractors)." },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    const model = process.env.OPENAI_MCQ_MODEL?.trim() || "gpt-5.1";
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY chưa được cấu hình trên server." },
+        { status: 500 }
+      );
+    }
+
     const {
       stem,
       correct_answer,
@@ -16,97 +51,61 @@ export async function POST(req: NextRequest) {
       specialty_name,
     } = body;
 
-    if (
-      !stem ||
-      !correct_answer ||
-      !Array.isArray(distractors) ||
-      distractors.length === 0
-    ) {
-      return NextResponse.json(
-        { error: "Thiếu stem, correct_answer hoặc distractors." },
-        { status: 400 }
-      );
-    }
-
-    if (!learner_level || !bloom_level || !llos_text) {
-      return NextResponse.json(
-        { error: "Thiếu learner_level, bloom_level hoặc llos_text." },
-        { status: 400 }
-      );
-    }
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "Thiếu OPENAI_API_KEY trên server." },
-        { status: 500 }
-      );
-    }
-
-    const model = process.env.OPENAI_EDUFIT_MODEL?.trim() || "gpt-5.1";
-
-    const mcqText = `
-STEM:
-${stem}
-
-Correct answer:
-${correct_answer}
-
-Distractors:
-${distractors.map((d, i) => `(${String.fromCharCode(65 + i + 1)}) ${d}`).join("\n")}
-
-Explanation:
-${explanation || "(không có)"}
-`.trim();
-
     const prompt = `
-Bạn là chuyên gia giáo dục Y khoa & xây dựng chương trình đào tạo.
+Bạn là chuyên gia giáo dục y khoa và thiết kế đề thi.
 
-Nhiệm vụ: ĐÁNH GIÁ SỰ PHÙ HỢP GIÁO DỤC (Educational Fit) của câu MCQ với:
-- Bậc đào tạo: ${learner_level}
-- Mức Bloom mục tiêu: ${bloom_level}
-- LLOs của bài học
-- Chuyên ngành: ${specialty_name || "không rõ"}
+Nhiệm vụ: Đánh giá mức độ "phù hợp giáo dục" (Educational Fit) của câu MCQ sau với:
+- Bậc học (learner level)
+- Mức Bloom mục tiêu
+- Danh sách LLOs của bài học
 
-LLOs (learning outcomes) của bài:
-${llos_text}
+Thông tin:
+- Chuyên ngành: ${specialty_name || "Y học cổ truyền / y khoa"}
+- Bậc học: ${learner_level || "Không rõ"}
+- Bloom mục tiêu: ${bloom_level || "Không rõ"}
 
-Câu MCQ cần đánh giá:
-${mcqText}
+Câu MCQ:
+- Stem: ${stem}
+- Correct answer: ${correct_answer}
+- Distractors: ${distractors.map((d, i) => `(${i + 1}) ${d}`).join("; ")}
+- Explanation: ${explanation}
 
-Các bước suy luận:
-1) Suy luận MỨC BLOOM THỰC TẾ của câu hỏi (dựa vào stem + skill cần dùng).
-2) So sánh mức Bloom thực tế với mức Bloom mục tiêu.
-   - bloom_match = "good" | "too_low" | "too_high"
-3) Đánh giá độ phù hợp với BẬC HỌC (learner_level).
-   - level_fit = "good" | "too_easy" | "too_hard"
-4) Đánh giá câu MCQ có thực sự đo được LLOs nào trong danh sách hay không:
-   - LLO nào được đo trực tiếp
-   - LLO nào chỉ liên quan gián tiếp
-   - LLO nào không liên quan
-5) Gợi ý chỉnh sửa nếu muốn nâng / hạ độ khó, hoặc gắn sát hơn với LLO.
+LLOs (mỗi dòng là một LLO):
+${llos_text || "(không cung cấp rõ, hãy suy luận tổng quát)"}
 
-YÊU CẦU: Trả về JSON ĐÚNG CẤU TRÚC sau (tiếng Việt):
+YÊU CẦU:
+1) Suy luận mức Bloom thực tế của câu hỏi này (inferred_bloom).
+2) So sánh với Bloom mục tiêu (bloom_level):
+   - bloom_match: "good" | "too_low" | "too_high" (hoặc mô tả khác nếu cần).
+3) Đánh giá độ phù hợp với bậc học:
+   - level_fit: "good" | "too_easy" | "too_hard" (hoặc mô tả khác).
+4) Phân tích mức độ "coverage" của câu hỏi đối với từng LLO:
+   - llo: nội dung LLO (string).
+   - coverage: "direct" | "indirect" | "none".
+   - comment: nhận xét ngắn (tại sao).
+5) Đưa ra recommendations: mảng string, mỗi string là 1 gợi ý cụ thể để:
+   - nâng/giảm mức Bloom cho phù hợp
+   - điều chỉnh stem/distractors/explanation để align tốt hơn với LLOs và bậc học.
+
+TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON THUẦN (KHÔNG TEXT THỪA):
 
 {
-  "inferred_bloom": "remember|understand|apply|analyze|evaluate|create",
-  "bloom_match": "good|too_low|too_high",
-  "level_fit": "good|too_easy|too_hard",
-  "summary": "Tóm tắt ngắn (3-5 câu) về mức độ phù hợp của câu hỏi.",
+  "inferred_bloom": "apply / analyze / evaluate / ...",
+  "bloom_match": "good" | "too_low" | "too_high",
+  "level_fit": "good" | "too_easy" | "too_hard",
+  "summary": "đoạn tóm tắt ngắn bằng tiếng Việt",
   "llo_coverage": [
     {
-      "llo": "nội dung LLO gốc (từ llos_text)",
-      "coverage": "direct|indirect|none",
-      "comment": "nhận xét ngắn"
+      "llo": "string",
+      "coverage": "direct" | "indirect" | "none",
+      "comment": "string"
     }
   ],
   "recommendations": [
-    "gợi ý 1...",
-    "gợi ý 2..."
+    "string",
+    "string"
   ]
 }
-
-Không thêm trường nào khác.
 `.trim();
 
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -121,36 +120,30 @@ Không thêm trường nào khác.
       }),
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      return NextResponse.json(
-        { error: "Lỗi khi gọi GPT Educational Fit.", detail: text },
-        { status: 500 }
-      );
-    }
-
     const data = await response.json();
-    const outText = data.output_text;
+    const text: string | undefined = (data as any)?.output_text;
 
-    if (!outText) {
+    if (!text) {
       return NextResponse.json(
-        { error: "GPT không trả về nội dung edu-fit." },
+        { error: "GPT không trả về nội dung Educational Fit." },
         { status: 500 }
       );
     }
 
     let parsed: any;
     try {
-      parsed = JSON.parse(outText);
+      parsed = JSON.parse(text);
     } catch (e) {
+      console.error("Edu-fit JSON parse error:", e, text);
       return NextResponse.json(
-        { error: "JSON edu-fit không hợp lệ.", raw: outText },
+        { error: "JSON GPT trả về sai định dạng", raw: text },
         { status: 500 }
       );
     }
 
     return NextResponse.json(parsed);
   } catch (err: any) {
+    console.error("edu-fit error:", err);
     return NextResponse.json(
       { error: "Lỗi server Educational Fit.", detail: String(err) },
       { status: 500 }
