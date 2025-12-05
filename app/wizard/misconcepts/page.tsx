@@ -34,7 +34,7 @@ type MisItem = {
   description: string;
   error_type: string;
   approved: boolean;
-  source: "db" | "gpt"; // để phân biệt Mis cũ từ DB và Mis mới từ GPT
+  source: "db" | "gpt"; // để phân biệt Mis cũ và Mis mới
 };
 
 const PAGE = 1000;
@@ -223,7 +223,7 @@ export default function MisconceptWizard() {
   async function syncMisForSelectedAus(newSelectedAuIds: Set<string>) {
     if (!userId) return;
 
-    // Xóa các Mis tương ứng với AU không còn được chọn
+    // Xóa Mis của AU không còn được chọn khỏi state
     setMiscons((prev) => prev.filter((m) => newSelectedAuIds.has(m.au_id)));
 
     const auIds = Array.from(newSelectedAuIds);
@@ -304,8 +304,8 @@ export default function MisconceptWizard() {
         existingByAu[key].push(m.description);
       });
 
-    // dự đoán specialty_name / learner_level / bloom_level từ dữ liệu hiện có
-    const specialtyName = "Y học cổ truyền"; // tạm thời hard-code, sau này có specialty table
+    // dự đoán specialty_name / learner_level / bloom_level
+    const specialtyName = "Y học cổ truyền"; // tạm thời hard-code
     const learnerLevel =
       selectedLlo.level_suggested || "Sinh viên y khoa (undergrad)";
     const bloomLevel =
@@ -441,7 +441,11 @@ export default function MisconceptWizard() {
 
     const approvedMis = miscons.filter((m) => m.approved);
     if (approvedMis.length === 0) {
-      if (!confirm("Không có Mis nào được duyệt. Bạn vẫn muốn xóa hết Mis cũ?")) {
+      if (
+        !confirm(
+          "Không có Mis nào được duyệt. Bạn vẫn muốn xóa hết Mis cũ của các AU đã chọn?"
+        )
+      ) {
         return;
       }
     }
@@ -529,6 +533,17 @@ export default function MisconceptWizard() {
 
   const totalApproved = useMemo(
     () => miscons.filter((m) => m.approved).length,
+    [miscons]
+  );
+
+  // Tách Mis theo nguồn
+  const dbMiscons = useMemo(
+    () => miscons.filter((m) => m.source === "db"),
+    [miscons]
+  );
+
+  const gptMiscons = useMemo(
+    () => miscons.filter((m) => m.source === "gpt"),
     [miscons]
   );
 
@@ -752,19 +767,21 @@ export default function MisconceptWizard() {
         )}
       </div>
 
-      {/* Card 4: Danh sách Misconceptions */}
-      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
+      {/* Card 4: Danh sách Misconceptions – tách DB vs GPT */}
+      <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-5">
+        {/* Header chung */}
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-xs font-semibold text-slate-700">
               Danh sách Misconceptions
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Bạn có thể chỉnh sửa nội dung Mis, phân loại lỗi, tick “Duyệt”,
-              refine từng Mis bằng GPT hoặc xoá bớt trước khi lưu.
+              Mis đã lưu (từ Supabase) và Mis mới sinh từ GPT được tách thành
+              hai vùng riêng để dễ soát lại. Bạn vẫn có thể chỉnh sửa, duyệt,
+              refine hoặc xoá trước khi lưu.
             </p>
           </div>
-          <div className="text-[11px] text-slate-500">
+          <div className="text-[11px] text-slate-500 text-right">
             Tổng:{" "}
             <span className="font-semibold text-slate-800">
               {miscons.length}
@@ -777,103 +794,253 @@ export default function MisconceptWizard() {
           </div>
         </div>
 
-        {miscons.length === 0 && (
-          <div className="text-sm text-slate-400 mt-2">
-            Chưa có Misconception nào cho các AU đã chọn.
-            <br />
-            • Nếu đã lưu trước đây, hãy đảm bảo bạn đã tick đúng AU. <br />
-            • Hoặc bấm nút “Sinh Misconceptions (GPT)” ở card bên trên để tạo
-            mới.
+        {/* Sub-card 4.1: Mis đã lưu từ Supabase (DB) */}
+        <div className="border rounded-2xl p-4 bg-slate-50/60 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-slate-700">
+                Misconceptions đã lưu trong Supabase
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Đây là các Mis đã được lưu trước đó trong bảng{" "}
+                <code className="text-[10px] bg-white px-1 rounded">
+                  misconceptions
+                </code>{" "}
+                (source = &quot;db&quot;). Bạn có thể chỉnh sửa lại, đổi loại
+                lỗi, tick duyệt hoặc xoá.
+              </p>
+            </div>
+            <div className="text-[11px] text-slate-500 text-right">
+              DB Mis:{" "}
+              <span className="font-semibold text-slate-800">
+                {dbMiscons.length}
+              </span>
+            </div>
           </div>
-        )}
 
-        <div className="space-y-4">
-          {miscons.map((m, i) => {
-            const au = aus.find((a) => a.id === m.au_id);
-            return (
-              <div
-                key={`${m.au_id}-${m.id ?? "tmp"}-${i}`}
-                className="p-4 bg-slate-50 rounded-2xl border border-slate-200"
-              >
-                {/* AU label */}
-                {au && (
-                  <div className="text-[11px] text-slate-500 mb-1">
-                    AU:{" "}
-                    <span className="font-medium line-clamp-1 text-slate-800">
-                      {au.core_statement}
-                    </span>
-                  </div>
-                )}
+          {dbMiscons.length === 0 && (
+            <div className="text-[11px] text-slate-400">
+              Chưa có Mis nào được lưu cho các AU đã chọn.
+            </div>
+          )}
 
-                <textarea
-                  className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
-                  rows={3}
-                  value={m.description}
-                  onChange={(e) =>
-                    updateMisItem(i, "description", e.target.value)
-                  }
-                />
+          <div className="space-y-4">
+            {dbMiscons.map((m) => {
+              const globalIndex = miscons.indexOf(m);
+              if (globalIndex === -1) return null;
 
-                <div className="flex flex-wrap justify-between items-center mt-2 gap-3">
-                  <div className="flex flex-wrap items-center gap-3 text-xs">
-                    <select
-                      value={m.error_type}
-                      onChange={(e) =>
-                        updateMisItem(i, "error_type", e.target.value)
-                      }
-                      className="border rounded-lg px-3 py-1 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
-                    >
-                      <option value="conceptual">Conceptual</option>
-                      <option value="procedural">Procedural</option>
-                      <option value="bias">Cognitive bias</option>
-                      <option value="clinical_reasoning">
-                        Clinical reasoning
-                      </option>
-                      <option value="terminology">Terminology</option>
-                    </select>
+              const au = aus.find((a) => a.id === m.au_id);
+              return (
+                <div
+                  key={`${m.au_id}-${m.id ?? "db"}-${globalIndex}`}
+                  className="p-4 bg-white rounded-2xl border border-slate-200"
+                >
+                  {/* AU label */}
+                  {au && (
+                    <div className="text-[11px] text-slate-500 mb-1">
+                      AU:{" "}
+                      <span className="font-medium line-clamp-1 text-slate-800">
+                        {au.core_statement}
+                      </span>
+                    </div>
+                  )}
 
-                    <label className="flex items-center gap-1 text-xs text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={m.approved}
+                  <textarea
+                    className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                    rows={3}
+                    value={m.description}
+                    onChange={(e) =>
+                      updateMisItem(globalIndex, "description", e.target.value)
+                    }
+                  />
+
+                  <div className="flex flex-wrap justify-between items-center mt-2 gap-3">
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <select
+                        value={m.error_type}
                         onChange={(e) =>
-                          updateMisItem(i, "approved", e.target.checked)
+                          updateMisItem(
+                            globalIndex,
+                            "error_type",
+                            e.target.value
+                          )
                         }
-                      />
-                      Duyệt
-                    </label>
+                        className="border rounded-lg px-3 py-1 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                      >
+                        <option value="conceptual">Conceptual</option>
+                        <option value="procedural">Procedural</option>
+                        <option value="bias">Cognitive bias</option>
+                        <option value="clinical_reasoning">
+                          Clinical reasoning
+                        </option>
+                        <option value="terminology">Terminology</option>
+                      </select>
 
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                        m.source === "db"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                          : "bg-indigo-50 text-indigo-700 border-indigo-100"
-                      }`}
-                    >
-                      {m.source === "db" ? "Đã lưu" : "GPT mới"}
-                    </span>
-                  </div>
+                      <label className="flex items-center gap-1 text-xs text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={m.approved}
+                          onChange={(e) =>
+                            updateMisItem(
+                              globalIndex,
+                              "approved",
+                              e.target.checked
+                            )
+                          }
+                        />
+                        Duyệt
+                      </label>
 
-                  <div className="flex items-center gap-3 text-[11px]">
-                    <button
-                      type="button"
-                      onClick={() => refineMis(i)}
-                      className="text-brand-700 hover:underline"
-                    >
-                      Refine bằng GPT
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeMisItem(i)}
-                      className="text-rose-600 hover:underline"
-                    >
-                      Xóa
-                    </button>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-100">
+                        Đã lưu (DB)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => refineMis(globalIndex)}
+                        className="text-brand-700 hover:underline"
+                      >
+                        Refine bằng GPT
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeMisItem(globalIndex)}
+                        className="text-rose-600 hover:underline"
+                      >
+                        Xóa
+                      </button>
+                    </div>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Sub-card 4.2: Mis mới sinh từ GPT (source = "gpt") */}
+        <div className="border rounded-2xl p-4 bg-indigo-50/40 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-slate-700">
+                Misconceptions mới sinh từ GPT (chưa lưu)
               </div>
-            );
-          })}
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Đây là các Mis GPT vừa sinh (source = &quot;gpt&quot;). Sau khi
+                chỉnh sửa, tick “Duyệt” và bấm “Lưu Misconceptions”, các Mis
+                được duyệt sẽ được ghi xuống Supabase và lần load lại sau sẽ
+                nằm ở card “Misconceptions đã lưu trong Supabase”.
+              </p>
+            </div>
+            <div className="text-[11px] text-slate-500 text-right">
+              GPT Mis:{" "}
+              <span className="font-semibold text-slate-800">
+                {gptMiscons.length}
+              </span>
+            </div>
+          </div>
+
+          {gptMiscons.length === 0 && (
+            <div className="text-[11px] text-slate-400">
+              Chưa có Mis mới từ GPT. Bấm “Sinh Misconceptions (GPT)” ở card
+              phía trên để tạo gợi ý mới.
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {gptMiscons.map((m) => {
+              const globalIndex = miscons.indexOf(m);
+              if (globalIndex === -1) return null;
+
+              const au = aus.find((a) => a.id === m.au_id);
+              return (
+                <div
+                  key={`${m.au_id}-${m.id ?? "gpt"}-${globalIndex}`}
+                  className="p-4 bg-white rounded-2xl border border-indigo-200"
+                >
+                  {/* AU label */}
+                  {au && (
+                    <div className="text-[11px] text-slate-500 mb-1">
+                      AU:{" "}
+                      <span className="font-medium line-clamp-1 text-slate-800">
+                        {au.core_statement}
+                      </span>
+                    </div>
+                  )}
+
+                  <textarea
+                    className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                    rows={3}
+                    value={m.description}
+                    onChange={(e) =>
+                      updateMisItem(globalIndex, "description", e.target.value)
+                    }
+                  />
+
+                  <div className="flex flex-wrap justify-between items-center mt-2 gap-3">
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <select
+                        value={m.error_type}
+                        onChange={(e) =>
+                          updateMisItem(
+                            globalIndex,
+                            "error_type",
+                            e.target.value
+                          )
+                        }
+                        className="border rounded-lg px-3 py-1 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                      >
+                        <option value="conceptual">Conceptual</option>
+                        <option value="procedural">Procedural</option>
+                        <option value="bias">Cognitive bias</option>
+                        <option value="clinical_reasoning">
+                          Clinical reasoning
+                        </option>
+                        <option value="terminology">Terminology</option>
+                      </select>
+
+                      <label className="flex items-center gap-1 text-xs text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={m.approved}
+                          onChange={(e) =>
+                            updateMisItem(
+                              globalIndex,
+                              "approved",
+                              e.target.checked
+                            )
+                          }
+                        />
+                        Duyệt
+                      </label>
+
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border bg-indigo-50 text-indigo-700 border-indigo-200">
+                        GPT mới
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => refineMis(globalIndex)}
+                        className="text-brand-700 hover:underline"
+                      >
+                        Refine bằng GPT
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeMisItem(globalIndex)}
+                        className="text-rose-600 hover:underline"
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
