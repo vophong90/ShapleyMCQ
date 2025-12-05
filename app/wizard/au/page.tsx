@@ -13,6 +13,7 @@ type WizardContext = {
   lesson_title?: string;
   learner_level?: string;
   bloom_level?: string;
+  // Giữ để tương thích backward – nhưng ưu tiên LLO từ DB
   llos_text?: string;
 };
 
@@ -43,6 +44,13 @@ type SavedAU = {
   created_at?: string | null;
 };
 
+type LLO = {
+  id: string;
+  text: string;
+  bloom_suggested?: string | null;
+  level_suggested?: string | null;
+};
+
 function normalizeCore(text: string): string {
   return text.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -68,7 +76,11 @@ export default function AUPage() {
   const [savedAus, setSavedAus] = useState<SavedAU[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
 
-  // Load context từ localStorage
+  // LLO từ Supabase cho course/lesson hiện tại
+  const [llos, setLlos] = useState<LLO[]>([]);
+  const [loadingLLOs, setLoadingLLOs] = useState(false);
+
+  // ====== Load context từ localStorage ======
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -89,7 +101,7 @@ export default function AUPage() {
     }
   }, [router]);
 
-  // lấy session để có userId
+  // ====== lấy session để có userId ======
   useEffect(() => {
     let cancelled = false;
     async function loadSession() {
@@ -106,7 +118,7 @@ export default function AUPage() {
     };
   }, []);
 
-  // load danh sách Học phần của user
+  // ====== load danh sách Học phần của user ======
   useEffect(() => {
     if (!userId) return;
 
@@ -133,7 +145,7 @@ export default function AUPage() {
     };
   }, [userId]);
 
-  // load Lessons khi chọn course
+  // ====== load Lessons khi chọn course ======
   useEffect(() => {
     if (!userId || !context || !context.course_id) {
       setLessons([]);
@@ -141,7 +153,6 @@ export default function AUPage() {
     }
 
     const courseId = context.course_id;
-
     let cancelled = false;
 
     async function loadLessons() {
@@ -166,7 +177,7 @@ export default function AUPage() {
     };
   }, [userId, context]);
 
-  // load AU đã lưu cho course + lesson hiện tại
+  // ====== load AU đã lưu cho course + lesson hiện tại ======
   useEffect(() => {
     if (!userId || !context || !context.course_id || !context.lesson_id) {
       setSavedAus([]);
@@ -206,6 +217,43 @@ export default function AUPage() {
     };
   }, [userId, context]);
 
+  // ====== load LLOs từ Supabase cho course + lesson hiện tại ======
+  useEffect(() => {
+    if (!userId || !context || !context.course_id || !context.lesson_id) {
+      setLlos([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadLLOs() {
+      setLoadingLLOs(true);
+      const { data, error } = await supabase
+        .from("llos")
+        .select("id, text, bloom_suggested, level_suggested")
+        .eq("owner_id", userId)
+        .eq("course_id", context.course_id!)
+        .eq("lesson_id", context.lesson_id!)
+        .order("created_at", { ascending: true });
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Load LLOs error:", error);
+        setLlos([]);
+      } else {
+        setLlos(data ?? []);
+      }
+      setLoadingLLOs(false);
+    }
+
+    loadLLOs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, context]);
+
   function persistContext(next: WizardContext) {
     setContext(next);
     if (typeof window !== "undefined") {
@@ -213,7 +261,27 @@ export default function AUPage() {
     }
   }
 
-  // chọn lại Học phần / Bài học
+  // ====== Helper: lấy danh sách LLO hiện tại ======
+  function getCurrentLloLines(): string[] {
+    // Ưu tiên lấy từ DB (bảng llos)
+    const fromDb = llos
+      .map((l) => (l.text || "").trim())
+      .filter((t) => t.length > 0);
+    if (fromDb.length > 0) return fromDb;
+
+    // Fallback: lấy từ context.llos_text (case cũ)
+    if (context?.llos_text) {
+      const fromContext = context.llos_text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      if (fromContext.length > 0) return fromContext;
+    }
+
+    return [];
+  }
+
+  // ====== chọn lại Học phần / Bài học ======
   function handleChangeCourse(e: ChangeEvent<HTMLSelectElement>) {
     const courseId = e.target.value || undefined;
     const course = courses.find((c) => c.id === courseId);
@@ -227,9 +295,10 @@ export default function AUPage() {
       lesson_title: undefined,
     };
     persistContext(updated);
-    // reset AU tạm & AU đã lưu (sẽ reload bằng effect)
+    // reset AU tạm & AU đã lưu & LLO (sẽ reload bằng effect)
     setAus([]);
     setSavedAus([]);
+    setLlos([]);
   }
 
   function handleChangeLesson(e: ChangeEvent<HTMLSelectElement>) {
@@ -242,9 +311,10 @@ export default function AUPage() {
       lesson_title: lesson?.title,
     };
     persistContext(updated);
-    // reset AU tạm & AU đã lưu (sẽ reload bằng effect)
+    // reset AU tạm & AU đã lưu & LLO (sẽ reload bằng effect)
     setAus([]);
     setSavedAus([]);
+    setLlos([]);
   }
 
   function handleFilesChange(e: ChangeEvent<HTMLInputElement>) {
@@ -259,19 +329,26 @@ export default function AUPage() {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  // ====== Gọi GPT sinh AU ======
   async function handleGenAU() {
     if (!context) {
       setError("Chưa có bối cảnh. Vui lòng quay lại Bước 1.");
       return;
     }
-    if (!context.llos_text || !context.llos_text.trim()) {
-      setError("Thiếu LLO. Vui lòng quay lại Bước 1 để nhập LLO.");
+
+    const lloLines = getCurrentLloLines();
+    if (lloLines.length === 0) {
+      setError(
+        "Chưa tìm thấy LLO cho bài học này. Vui lòng đảm bảo đã nhập LLO ở Bước 1."
+      );
       return;
     }
     if (!context.course_id || !context.lesson_id) {
       setError("Vui lòng chọn Học phần và Bài học trước khi sinh AU.");
       return;
     }
+
+    const llos_text_to_use = lloLines.join("\n");
 
     setGenLoading(true);
     setMsg(null);
@@ -280,7 +357,7 @@ export default function AUPage() {
 
     try {
       const formData = new FormData();
-      formData.append("llos_text", context.llos_text);
+      formData.append("llos_text", llos_text_to_use);
       if (context.learner_level)
         formData.append("learner_level", context.learner_level);
       if (context.bloom_level)
@@ -344,7 +421,7 @@ export default function AUPage() {
       } else {
         setAus(mapped);
         setMsg(
-          `Đã sinh được ${mapped.length} AU mới (không trùng với AU đã lưu). Bạn có thể chọn/bỏ chọn trước khi lưu.`
+          `Đã sinh được ${mapped.length} AU mới (không trùng với AU đã lưu). Bạn có thể chỉnh sửa, chọn/bỏ chọn trước khi lưu.`
         );
       }
 
@@ -356,6 +433,7 @@ export default function AUPage() {
     }
   }
 
+  // ====== Chỉnh sửa / Xóa AU trong danh sách tạm ======
   function toggleSelectAU(index: number) {
     setAus((prev) =>
       prev.map((au, i) =>
@@ -364,6 +442,31 @@ export default function AUPage() {
     );
   }
 
+  function updateAUField(
+    index: number,
+    field: "core_statement" | "short_explanation" | "bloom_min",
+    value: string
+  ) {
+    setAus((prev) =>
+      prev.map((au, i) =>
+        i === index
+          ? {
+              ...au,
+              [field]:
+                field === "short_explanation" || field === "bloom_min"
+                  ? value || null
+                  : value,
+            }
+          : au
+      )
+    );
+  }
+
+  function removeAU(index: number) {
+    setAus((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // ====== Lưu AU xuống Supabase ======
   async function handleSaveAU() {
     if (!context) {
       setError("Chưa có bối cảnh. Vui lòng quay lại Bước 1.");
@@ -401,9 +504,9 @@ export default function AUPage() {
         owner_id: session.user.id,
         course_id: context.course_id!,
         lesson_id: context.lesson_id!,
-        core_statement: au.core_statement,
-        short_explanation: au.short_explanation ?? null,
-        bloom_min: au.bloom_min ?? null,
+        core_statement: au.core_statement.trim(),
+        short_explanation: (au.short_explanation || "")?.trim() || null,
+        bloom_min: (au.bloom_min || "")?.trim() || null,
         status: "draft",
       }));
 
@@ -445,6 +548,8 @@ export default function AUPage() {
     }
   }
 
+  // ====== Render ======
+
   if (loading) {
     return (
       <div className="max-w-6xl mx-auto px-6 py-10">
@@ -470,6 +575,7 @@ export default function AUPage() {
   }
 
   const hasSelected = aus.some((au) => au.selected);
+  const currentLloLines = getCurrentLloLines();
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
@@ -477,12 +583,12 @@ export default function AUPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
-            Bước 2A – Assessment Units (AU)
+            Bước 2 – Assessment Units (AU)
           </h1>
           <p className="text-sm text-slate-600 mt-1">
             Từ LLO và tài liệu bài học, GPT sẽ gợi ý các Assessment Unit (AU) cốt
-            lõi. Bạn chọn những AU phù hợp để lưu và dùng cho các bước
-            Misconceptions &amp; MCQ sau này.
+            lõi. Bạn có thể chỉnh sửa, xóa, chọn/bỏ chọn AU trước khi lưu xuống
+            hệ thống.
           </p>
         </div>
 
@@ -577,17 +683,51 @@ export default function AUPage() {
         </div>
 
         <div>
-          <div className="text-xs font-semibold text-slate-700 mb-1">
-            LLO của bài học:
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-semibold text-slate-700">
+              LLO của bài học:
+            </div>
+            <div className="text-[11px] text-slate-500">
+              {loadingLLOs ? (
+                <span>Đang tải LLO…</span>
+              ) : (
+                <>
+                  Tổng:{" "}
+                  <span className="font-semibold text-slate-800">
+                    {currentLloLines.length}
+                  </span>{" "}
+                  LLO
+                </>
+              )}
+            </div>
           </div>
-          <pre
-            className="font-sans text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 
-                       max-h-40 overflow-auto whitespace-pre-wrap leading-relaxed"
-          >
-            {context.llos_text}
-          </pre>
+
+          {loadingLLOs ? (
+            <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              Đang đọc LLO từ cơ sở dữ liệu…
+            </div>
+          ) : currentLloLines.length === 0 ? (
+            <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+              Chưa có LLO cho bài học này. Vui lòng quay lại Bước 1 để nhập và
+              lưu LLO.
+            </div>
+          ) : (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-48 overflow-auto">
+              <ul className="space-y-1.5 text-xs text-slate-700">
+                {currentLloLines.map((line, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <span className="mt-[2px] text-[10px] font-semibold text-slate-500">
+                      {idx + 1}.
+                    </span>
+                    <span className="leading-relaxed">{line}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <p className="mt-1 text-[11px] text-slate-500">
-            GPT sẽ dựa vào LLO này + tài liệu bạn upload để sinh AU.
+            GPT sẽ dựa vào danh sách LLO này + tài liệu bạn upload để sinh AU.
           </p>
         </div>
       </div>
@@ -745,8 +885,8 @@ export default function AUPage() {
                 Các AU sinh mới từ GPT
               </div>
               <p className="text-xs text-slate-600 mt-0.5">
-                Chỉ hiển thị những AU không trùng với AU đã lưu trước đó. Bạn có
-                thể bỏ chọn những AU không phù hợp trước khi lưu.
+                Bạn có thể chỉnh sửa nội dung, cập nhật Bloom tối thiểu, bỏ chọn
+                hoặc xóa hẳn từng AU trước khi lưu xuống Supabase.
               </p>
             </div>
             <div className="text-[11px] text-slate-500">
@@ -763,41 +903,87 @@ export default function AUPage() {
               <div
                 key={idx}
                 className={
-                  "border rounded-xl px-3.5 py-2.5 text-xs flex flex-col gap-1 " +
+                  "border rounded-xl px-3.5 py-3 text-xs flex flex-col gap-2 " +
                   (au.selected
                     ? "bg-slate-50 border-brand-200"
                     : "bg-white border-slate-200 opacity-80")
                 }
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
-                    <div className="font-medium text-slate-900">
-                      {au.core_statement}
-                    </div>
-                    {au.short_explanation && (
-                      <p className="mt-0.5 text-[11px] text-slate-600">
-                        {au.short_explanation}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    {au.bloom_min && (
-                      <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-900 text-slate-50">
-                        Bloom tối thiểu: {au.bloom_min}
+                <div className="flex flex-col gap-2">
+                  {/* Core statement editable */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold text-slate-800">
+                        AU {idx + 1}
                       </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => toggleSelectAU(idx)}
-                      className={
-                        "mt-1 px-2.5 py-1 rounded-full text-[10px] font-semibold " +
-                        (au.selected
-                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                          : "bg-slate-100 text-slate-600 border border-slate-200")
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleSelectAU(idx)}
+                          className={
+                            "px-2.5 py-1 rounded-full text-[10px] font-semibold " +
+                            (au.selected
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "bg-slate-100 text-slate-600 border border-slate-200")
+                          }
+                        >
+                          {au.selected ? "Đang chọn" : "Không chọn"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeAU(idx)}
+                          className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                        >
+                          Xóa AU này
+                        </button>
+                      </div>
+                    </div>
+                    <textarea
+                      className="w-full border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                      value={au.core_statement}
+                      onChange={(e) =>
+                        updateAUField(idx, "core_statement", e.target.value)
                       }
-                    >
-                      {au.selected ? "Đang chọn" : "Không chọn"}
-                    </button>
+                      rows={2}
+                    />
+                  </div>
+
+                  {/* Short explanation editable */}
+                  <div>
+                    <label className="block text-[10px] font-medium text-slate-600 mb-1">
+                      Giải thích ngắn (tùy chọn)
+                    </label>
+                    <textarea
+                      className="w-full border rounded-lg px-2.5 py-1.5 text-[11px] outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
+                      value={au.short_explanation ?? ""}
+                      onChange={(e) =>
+                        updateAUField(
+                          idx,
+                          "short_explanation",
+                          e.target.value
+                        )
+                      }
+                      rows={2}
+                      placeholder="Có thể ghi rõ nội dung, ví dụ minh họa, giới hạn phạm vi của AU này…"
+                    />
+                  </div>
+
+                  {/* Bloom min editable */}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-medium text-slate-600">
+                        Bloom tối thiểu:
+                      </span>
+                      <input
+                        type="text"
+                        className="border rounded-lg px-2 py-1 text-[11px] w-32 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+                        value={au.bloom_min ?? ""}
+                        onChange={(e) =>
+                          updateAUField(idx, "bloom_min", e.target.value)
+                        }
+                        placeholder="VD: apply"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
