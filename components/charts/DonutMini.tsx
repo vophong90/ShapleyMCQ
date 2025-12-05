@@ -11,8 +11,8 @@ export default function DonutMini({ data }: { data: any[] }) {
         <PieChart>
           <Pie
             data={data}
-            dataKey="count"
-            nameKey="bloom_level"
+            dataKey="value"   // <-- khớp với API
+            nameKey="name"    // <-- khớp với API
             innerRadius="60%"
             outerRadius="80%"
           >
