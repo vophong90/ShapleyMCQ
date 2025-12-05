@@ -148,7 +148,7 @@ export default function AUPage() {
 
   // ====== load Lessons khi chọn course ======
   useEffect(() => {
-    if (!userId || !context || !context.course_id) {
+    if (!userId || !context?.course_id) {
       setLessons([]);
       return;
     }
@@ -176,11 +176,11 @@ export default function AUPage() {
     return () => {
       cancelled = true;
     };
-  }, [userId, context]);
+  }, [userId, context?.course_id]);
 
   // ====== load AU đã lưu cho course + lesson hiện tại ======
   useEffect(() => {
-    if (!userId || !context || !context.course_id || !context.lesson_id) {
+    if (!userId || !context?.course_id || !context.lesson_id) {
       setSavedAus([]);
       return;
     }
@@ -216,50 +216,52 @@ export default function AUPage() {
     return () => {
       cancelled = true;
     };
-  }, [userId, context]);
+  }, [userId, context?.course_id, context?.lesson_id]);
 
- // ====== load LLOs từ Supabase cho course + lesson hiện tại ======
-useEffect(() => {
-  if (!userId || !context || !context.course_id || !context.lesson_id) {
-    setLlos([]);
-    return;
-  }
-
-  // Sau khi qua được if trên, context chắc chắn không null
-  const courseId = context.course_id;
-  const lessonId = context.lesson_id;
-
-  let cancelled = false;
-
-  async function loadLLOs() {
-    setLoadingLLOs(true);
-    const { data, error } = await supabase
-      .from("llos")
-      .select("id, text, bloom_suggested, level_suggested")
-      .eq("owner_id", userId)
-      .eq("course_id", courseId!)
-      .eq("lesson_id", lessonId!)
-      .order("created_at", { ascending: true });
-
-    if (cancelled) return;
-
-    if (error) {
-      console.error("Load LLOs error:", error);
+  // ====== load LLOs từ Supabase cho course + lesson hiện tại ======
+  useEffect(() => {
+    if (!userId || !context?.course_id || !context.lesson_id) {
       setLlos([]);
-    } else {
-      const list = data ?? [];
-      setLlos(list);
-      if (!selectedLloId && list.length > 0) {
-        setSelectedLloId(list[0].id);
-      }
+      return;
     }
 
-  loadLLOs();
+    const courseId = context.course_id!;
+    const lessonId = context.lesson_id!;
 
-  return () => {
-    cancelled = true;
-  };
-}, [userId, context?.course_id, context?.lesson_id]);
+    let cancelled = false;
+
+    async function loadLLOs() {
+      setLoadingLLOs(true);
+      const { data, error } = await supabase
+        .from("llos")
+        .select("id, text, bloom_suggested, level_suggested")
+        .eq("owner_id", userId)
+        .eq("course_id", courseId)
+        .eq("lesson_id", lessonId)
+        .order("created_at", { ascending: true });
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Load LLOs error:", error);
+        setLlos([]);
+      } else {
+        const list = data ?? [];
+        setLlos(list);
+        // auto-chọn LLO đầu tiên nếu chưa có
+        if (!selectedLloId && list.length > 0) {
+          setSelectedLloId(list[0].id);
+        }
+      }
+      setLoadingLLOs(false);
+    }
+
+    loadLLOs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, context?.course_id, context?.lesson_id, selectedLloId]);
 
   function persistContext(next: WizardContext) {
     setContext(next);
@@ -269,31 +271,32 @@ useEffect(() => {
   }
 
   // ====== Helper: lấy danh sách LLO hiện tại ======
- function getCurrentLloLines(): string[] {
-  if (selectedLloId && llos.length > 0) {
-    const l = llos.find((x) => x.id === selectedLloId);
-    if (l?.text?.trim()) {
-      return [l.text.trim()];
+  function getCurrentLloLines(): string[] {
+    // Ưu tiên LLO đang chọn
+    if (selectedLloId && llos.length > 0) {
+      const l = llos.find((x) => x.id === selectedLloId);
+      if (l?.text?.trim()) {
+        return [l.text.trim()];
+      }
     }
+
+    // Nếu chưa chọn cụ thể LLO, nhưng vẫn muốn dùng toàn bộ (fallback cũ)
+    const fromDb = llos
+      .map((l) => (l.text || "").trim())
+      .filter((t) => t.length > 0);
+    if (fromDb.length > 0) return fromDb;
+
+    // Fallback: lấy từ context.llos_text (case cũ)
+    if (context?.llos_text) {
+      const fromContext = context.llos_text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      if (fromContext.length > 0) return fromContext;
+    }
+
+    return [];
   }
-
-  // Nếu chưa chọn cụ thể LLO, nhưng vẫn muốn dùng toàn bộ (fallback cũ)
-  const fromDb = llos
-    .map((l) => (l.text || "").trim())
-    .filter((t) => t.length > 0);
-  if (fromDb.length > 0) return fromDb;
-
-  // Fallback: lấy từ context.llos_text (case cũ)
-  if (context?.llos_text) {
-    const fromContext = context.llos_text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    if (fromContext.length > 0) return fromContext;
-  }
-
-  return [];
- }
 
   // ====== chọn lại Học phần / Bài học ======
   function handleChangeCourse(e: ChangeEvent<HTMLSelectElement>) {
@@ -330,6 +333,7 @@ useEffect(() => {
     setAus([]);
     setSavedAus([]);
     setLlos([]);
+    setSelectedLloId(null);
   }
 
   function handleFilesChange(e: ChangeEvent<HTMLInputElement>) {
@@ -350,10 +354,12 @@ useEffect(() => {
       setError("Chưa có bối cảnh. Vui lòng quay lại Bước 1.");
       return;
     }
-    if (!selectedLloId) { // 🔥 NEW
-    setError("Vui lòng chọn LLO mục tiêu trước khi sinh AU.");
-    return;
+
+    if (!selectedLloId) {
+      setError("Vui lòng chọn LLO mục tiêu trước khi sinh AU.");
+      return;
     }
+
     const lloLines = getCurrentLloLines();
     if (lloLines.length === 0) {
       setError(
@@ -503,8 +509,9 @@ useEffect(() => {
       );
       return;
     }
+
     if (!selectedLloId) {
-      setError("Vui lòng chọn LLO mục tiêu để gắn AU."); 
+      setError("Vui lòng chọn LLO mục tiêu để gắn AU.");
       return;
     }
 
@@ -707,28 +714,29 @@ useEffect(() => {
 
         {/* Chọn LLO mục tiêu để sinh & gắn AU */}
         {llos.length > 0 && (
-      <div className="mb-3">
-        <label className="block text-[11px] font-medium text-slate-600 mb-1">
-          LLO mục tiêu (AU sinh ra sẽ gắn với LLO này)
-        </label>
-        <select
-          className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
-          value={selectedLloId ?? ""}
-          onChange={(e) => setSelectedLloId(e.target.value || null)}
-          >
-          <option value="">-- Chọn LLO mục tiêu --</option>
-          {llos.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.text}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1 text-[11px] text-slate-500">
-          Bước 2 giả định rằng mỗi lần sinh AU là cho một LLO cụ thể. Bạn sẽ chạy lại bước này nếu cần AU cho LLO khác.
-        </p>
-      </div>
-    )}
-        
+          <div className="mb-3">
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              LLO mục tiêu (AU sinh ra sẽ gắn với LLO này)
+            </label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+              value={selectedLloId ?? ""}
+              onChange={(e) => setSelectedLloId(e.target.value || null)}
+            >
+              <option value="">-- Chọn LLO mục tiêu --</option>
+              {llos.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.text}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Bước 2 giả định rằng mỗi lần sinh AU là cho một LLO cụ thể. Bạn sẽ
+              chạy lại bước này nếu cần AU cho LLO khác.
+            </p>
+          </div>
+        )}
+
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-semibold text-slate-700">
