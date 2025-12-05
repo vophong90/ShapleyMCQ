@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/** COURSE, LESSON, LLO, AU TYPES */
+/** COURSE / LESSON / LLO / AU TYPES */
 type Course = {
   id: string;
   title: string;
@@ -17,39 +17,24 @@ type Lesson = {
 
 type LLO = {
   id: string;
-  code: string | null;
   text: string;
-  lesson_id: string | null;
 };
 
 type AU = {
   id: string;
   core_statement: string;
-  short_explanation: string | null;
-  bloom_min: string | null;
-  lesson_id: string | null;
-  llo_id: string | null;
 };
 
 /** MCQ LIST + DETAIL TYPES */
 type MCQListItem = {
   id: string;
   stem: string;
-  correct_answer: string;
   au_id: string | null;
 };
 
-type MCQDetail = {
-  id: string;
-  stem: string;
-  correct_answer: string;
-  explanation: string;
-  distractors: string[];
-};
-
-/** SIMULATION TYPES (giống bản cũ) */
+/** SIMULATION TYPES */
 type SimOption = {
-  label: string; // A, B, C, D...
+  label: string; // A, B, C, D
   text: string;
   is_correct: boolean;
 };
@@ -108,7 +93,7 @@ type MCQCardState = {
 
 const PAGE = 1000;
 
-// ---------- HÀM TÍNH SHAPLEY (dùng lại logic cũ, mở rộng tới F) ----------
+// ---------- HÀM TÍNH SHAPLEY ----------
 function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
   const distractorLabels = sim.options
     .filter((o) => !o.is_correct)
@@ -129,7 +114,6 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
       totalWrongAll++;
       wrongCounts[row.chosen_option] =
         (wrongCounts[row.chosen_option] || 0) + 1;
-
       if (lowAbility.has(row.persona)) {
         totalWrongLow++;
         wrongCountsNovice[row.chosen_option] =
@@ -150,7 +134,7 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
         wrong_pct: 0,
         novice_pct: 0,
         recommendation:
-          "Item quá dễ, hầu hết người học trả lời đúng nên khó đánh giá distractor.",
+          "Item quá dễ, hầu hết người học trả lời đúng – khó đánh giá distractor.",
       };
     });
   }
@@ -217,16 +201,16 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
     let recommendation: string;
     if (share_pct >= 40) {
       recommendation =
-        "Distractor rất mạnh, nên giữ vì có vai trò lớn trong việc phân tán câu trả lời sai.";
+        "Distractor rất mạnh – nên giữ, có vai trò lớn trong việc phân tán câu trả lời sai.";
     } else if (share_pct >= 25) {
       recommendation =
-        "Distractor khá mạnh, nên giữ và có thể tinh chỉnh diễn đạt để rõ ràng hơn.";
+        "Distractor khá mạnh – nên giữ, có thể tinh chỉnh wording để rõ ràng hơn.";
     } else if (share_pct >= 10) {
       recommendation =
-        "Distractor trung bình, có thể giữ nếu cần đủ bốn lựa chọn và cân nhắc cải thiện để hấp dẫn hơn.";
+        "Distractor trung bình – có thể giữ nếu cần đủ bốn lựa chọn, cân nhắc cải thiện để hấp dẫn hơn.";
     } else {
       recommendation =
-        "Distractor yếu, ít đóng góp vào câu sai, nên cân nhắc thay bằng distractor khác hoặc bỏ.";
+        "Distractor yếu – ít đóng góp vào câu sai, cân nhắc thay bằng distractor khác hoặc bỏ.";
     }
 
     rows.push({
@@ -256,10 +240,10 @@ export default function MCQSimulateMultiPage() {
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
 
   const [llos, setLlos] = useState<LLO[]>([]);
-  const [selectedLLO, setSelectedLLO] = useState<LLO | null>(null);
+  const [selectedLlo, setSelectedLlo] = useState<LLO | null>(null);
 
   const [aus, setAus] = useState<AU[]>([]);
-  const [selectedAU, setSelectedAU] = useState<AU | null>(null);
+  const [selectedAu, setSelectedAu] = useState<AU | null>(null);
 
   const [mcqList, setMcqList] = useState<MCQListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -310,12 +294,12 @@ export default function MCQSimulateMultiPage() {
     init();
   }, []);
 
-  // ----- chọn course → load lessons + llos, clear các thứ -----
+  // ----- chọn course → reset & load lessons + LLO -----
   async function handleSelectCourse(course: Course | null) {
     setSelectedCourse(course);
     setSelectedLesson(null);
-    setSelectedLLO(null);
-    setSelectedAU(null);
+    setSelectedLlo(null);
+    setSelectedAu(null);
 
     setLessons([]);
     setLlos([]);
@@ -326,103 +310,123 @@ export default function MCQSimulateMultiPage() {
 
     if (!course || !userId) return;
 
-    // load song song lessons + llos
-    const [lessonsRes, lloRes] = await Promise.all([
-      supabase
+    // Lessons
+    let allLessons: Lesson[] = [];
+    let fromL = 0;
+    while (true) {
+      const { data, error } = await supabase
         .from("lessons")
         .select("id, title")
         .eq("owner_id", userId)
         .eq("course_id", course.id)
-        .order("order_in_course", { ascending: true }),
-      supabase
+        .order("order_in_course", { ascending: true })
+        .range(fromL, fromL + PAGE - 1);
+
+      if (error) {
+        console.error("Error loading lessons:", error.message);
+        break;
+      }
+      if (!data || data.length === 0) break;
+      allLessons = allLessons.concat(data as Lesson[]);
+      if (data.length < PAGE) break;
+      fromL += PAGE;
+    }
+    setLessons(allLessons);
+
+    // LLO cho toàn course (lọc thêm theo lesson khi user chọn)
+    let allLlos: LLO[] = [];
+    let fromLo = 0;
+    while (true) {
+      const { data, error } = await supabase
         .from("llos")
-        .select("id, code, text, lesson_id")
+        .select("id, text")
         .eq("owner_id", userId)
         .eq("course_id", course.id)
-        .order("created_at", { ascending: true }),
-    ]);
+        .order("created_at", { ascending: true })
+        .range(fromLo, fromLo + PAGE - 1);
 
-    if (!lessonsRes.error && lessonsRes.data) {
-      setLessons(lessonsRes.data as Lesson[]);
-    } else if (lessonsRes.error) {
-      console.error("Error loading lessons:", lessonsRes.error.message);
+      if (error) {
+        console.error("Error loading LLOs:", error.message);
+        break;
+      }
+      if (!data || data.length === 0) break;
+      allLlos = allLlos.concat(data as LLO[]);
+      if (data.length < PAGE) break;
+      fromLo += PAGE;
     }
-
-    if (!lloRes.error && lloRes.data) {
-      setLlos(lloRes.data as LLO[]);
-    } else if (lloRes.error) {
-      console.error("Error loading LLOs:", lloRes.error.message);
-    }
+    setLlos(allLlos);
   }
 
-  // ----- chọn lesson → load AUs, reset LLO, AU, MCQ -----
+  // ----- chọn lesson → chỉ dùng để filter LLO & AU -----
   async function handleSelectLesson(lesson: Lesson | null) {
     setSelectedLesson(lesson);
-    setSelectedLLO(null);
-    setSelectedAU(null);
+    setSelectedLlo(null);
+    setSelectedAu(null);
     setAus([]);
     setMcqList([]);
     setSelectedIds(new Set());
     setCards([]);
 
-    if (!userId || !selectedCourse || !lesson) return;
+    if (!lesson || !selectedCourse || !userId) return;
 
-    let allAUs: AU[] = [];
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("assessment_units")
-        .select(
-          "id, core_statement, short_explanation, bloom_min, lesson_id, llo_id"
-        )
-        .eq("owner_id", userId)
-        .eq("course_id", selectedCourse.id)
-        .eq("lesson_id", lesson.id)
-        .order("created_at", { ascending: true })
-        .range(from, from + PAGE - 1);
+    // Lọc lại LLO theo lesson
+    const { data, error } = await supabase
+      .from("llos")
+      .select("id, text")
+      .eq("owner_id", userId)
+      .eq("course_id", selectedCourse.id)
+      .eq("lesson_id", lesson.id)
+      .order("created_at", { ascending: true });
 
-      if (error) {
-        console.error("Error loading assessment_units:", error.message);
-        break;
-      }
-      if (!data || data.length === 0) break;
-      allAUs = allAUs.concat(data as AU[]);
-      if (data.length < PAGE) break;
-      from += PAGE;
+    if (error) {
+      console.error("Error filtering LLOs by lesson:", error.message);
+      return;
+    }
+    setLlos((data as LLO[]) || []);
+  }
+
+  // ----- chọn LLO → load AU thuộc LLO đó -----
+  async function handleSelectLlo(llo: LLO | null) {
+    setSelectedLlo(llo);
+    setSelectedAu(null);
+    setAus([]);
+    setMcqList([]);
+    setSelectedIds(new Set());
+    setCards([]);
+
+    if (!llo || !selectedCourse || !selectedLesson || !userId) return;
+
+    const { data, error } = await supabase
+      .from("assessment_units")
+      .select("id, core_statement")
+      .eq("owner_id", userId)
+      .eq("course_id", selectedCourse.id)
+      .eq("lesson_id", selectedLesson.id)
+      .eq("llo_id", llo.id)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Error loading AUs:", error.message);
+      return;
     }
 
-    setAus(allAUs);
+    setAus((data as AU[]) || []);
   }
 
-  // ----- chọn LLO → chỉ lọc AU trên UI (AUs đã load theo lesson) -----
-  function handleSelectLLO(llo: LLO | null) {
-    setSelectedLLO(llo);
-    setSelectedAU(null);
-    setMcqList([]);
-    setSelectedIds(new Set());
-    setCards([]);
-  }
-
-  // filtered AUs theo LLO
-  const filteredAUs = useMemo(() => {
-    if (!selectedLLO) return aus;
-    return aus.filter((a) => a.llo_id === selectedLLO.id);
-  }, [aus, selectedLLO]);
-
-  // ----- chọn AU → load MCQ thuộc AU đó -----
-  async function handleSelectAU(au: AU | null) {
-    setSelectedAU(au);
+  // ----- chọn AU → load MCQs -----
+  async function handleSelectAu(au: AU | null) {
+    setSelectedAu(au);
     setMcqList([]);
     setSelectedIds(new Set());
     setCards([]);
 
-    if (!userId || !selectedCourse || !selectedLesson || !au) return;
+    if (!userId || !selectedCourse || !au) return;
 
     setListLoading(true);
 
     const { data, error } = await supabase
       .from("mcq_items")
-      .select("id, stem, correct_answer, au_id")
+      .select("id, stem, au_id")
       .eq("owner_id", userId)
       .eq("course_id", selectedCourse.id)
       .eq("au_id", au.id)
@@ -432,20 +436,20 @@ export default function MCQSimulateMultiPage() {
 
     if (error) {
       console.error("Error loading MCQs:", error.message);
-      setMcqList([]);
       return;
     }
 
     setMcqList((data as MCQListItem[]) || []);
   }
 
-  // ----- load chi tiết 1 MCQ (options + metrics) để thêm card -----
+  // ----- load chi tiết 1 MCQ (stem + options + metrics) để thêm card -----
   async function loadMCQCard(item: MCQListItem) {
     if (cards.some((c) => c.id === item.id)) return;
 
+    // 1) lấy stem
     const { data: itemData, error: itemError } = await supabase
       .from("mcq_items")
-      .select("id, stem, correct_answer, explanation")
+      .select("id, stem")
       .eq("id", item.id)
       .single();
 
@@ -454,6 +458,7 @@ export default function MCQSimulateMultiPage() {
       return;
     }
 
+    // 2) lấy options từ mcq_options
     const { data: optData, error: optError } = await supabase
       .from("mcq_options")
       .select("label, text, is_correct")
@@ -464,8 +469,8 @@ export default function MCQSimulateMultiPage() {
       console.error("Error loading mcq_options:", optError.message);
     }
 
-    let correct_answer = itemData.correct_answer as string;
-    const explanation = (itemData.explanation as string | null) || "";
+    let correct_answer = "";
+    const explanation = ""; // hiện chưa có cột trong schema
     let distractors: string[] = [];
 
     if (optData && optData.length > 0) {
@@ -489,6 +494,7 @@ export default function MCQSimulateMultiPage() {
         .map((o) => o.text);
     }
 
+    // 3) lấy metrics mới nhất (nếu có)
     let simResult: SimResult | null = null;
     let shapleyRows: ShapleyRow[] | null = null;
 
@@ -503,8 +509,7 @@ export default function MCQSimulateMultiPage() {
     if (metricData?.payload) {
       const payload = metricData.payload as any;
       if (payload.simResult) simResult = payload.simResult as SimResult;
-      if (payload.shapleyRows)
-        shapleyRows = payload.shapleyRows as ShapleyRow[];
+      if (payload.shapleyRows) shapleyRows = payload.shapleyRows as ShapleyRow[];
     }
 
     setCards((prev) => [
@@ -515,7 +520,7 @@ export default function MCQSimulateMultiPage() {
         correct_answer,
         explanation,
         distractors,
-        simN: 1200,
+        simN: 1200, // default: 6 persona x 200
         simLoading: false,
         simResult,
         shapleyRows,
@@ -525,7 +530,7 @@ export default function MCQSimulateMultiPage() {
     ]);
   }
 
-  // ----- toggle chọn MCQ trong list -----
+  // ----- toggle chọn MCQ -----
   async function toggleSelectMCQ(item: MCQListItem) {
     const newSet = new Set(selectedIds);
     if (newSet.has(item.id)) {
@@ -650,12 +655,11 @@ export default function MCQSimulateMultiPage() {
     updateCard(id, (c) => ({ ...c, saving: true }));
 
     try {
+      // 1) update mcq_items (chỉ stem, vì schema hiện không có correct_answer / explanation)
       const { error: updError } = await supabase
         .from("mcq_items")
         .update({
           stem,
-          correct_answer,
-          explanation,
         })
         .eq("id", id);
 
@@ -666,6 +670,7 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
+      // 2) delete options cũ
       const { error: delError } = await supabase
         .from("mcq_options")
         .delete()
@@ -678,6 +683,7 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
+      // 3) insert options mới: A = correct_answer, B.. = distractors
       const labels = ["A", "B", "C", "D", "E", "F"];
       const rows = [
         {
@@ -707,6 +713,7 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
+      // 4) lưu metrics nếu có
       if (simResult && shapleyRows) {
         const { error: metricError } = await supabase
           .from("mcq_metrics")
@@ -723,7 +730,7 @@ export default function MCQSimulateMultiPage() {
         }
       }
 
-      alert("Đã lưu MCQ và kết quả phân tích.");
+      alert("Đã lưu MCQ và phân tích!");
     } catch (e: any) {
       console.error("saveCard error:", e);
       alert("Lỗi server khi lưu MCQ.");
@@ -733,11 +740,6 @@ export default function MCQSimulateMultiPage() {
   }
 
   const totalSelected = useMemo(() => selectedIds.size, [selectedIds]);
-
-  const llosForCurrentLesson = useMemo(() => {
-    if (!selectedLesson) return llos;
-    return llos.filter((l) => l.lesson_id === selectedLesson.id);
-  }, [llos, selectedLesson]);
 
   // ============== UI ==============
   return (
@@ -750,8 +752,8 @@ export default function MCQSimulateMultiPage() {
           </h1>
           <p className="text-sm text-slate-600 mt-1">
             Chọn Học phần, Bài học, LLO, AU rồi tick nhiều MCQ để phân tích
-            song song. Mỗi câu được mô phỏng bởi nhiều nhóm người học và tính
-            Shapley để đánh giá sức mạnh từng distractor.
+            song song. Mỗi câu được mô phỏng bởi nhiều nhóm người học
+            (persona), sau đó tính Shapley để đánh giá sức mạnh distracted.
           </p>
         </div>
         {initLoading && (
@@ -761,7 +763,7 @@ export default function MCQSimulateMultiPage() {
         )}
       </div>
 
-      {/* CARD 1: COURSE / LESSON / LLO / AU */}
+      {/* CARD 1: CHUỖI CHỌN COURSE → LESSON → LLO → AU */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
         <div className="text-xs font-semibold text-slate-700 mb-1">
           Chuỗi chọn Học phần, Bài học, LLO và Assessment Unit
@@ -781,7 +783,7 @@ export default function MCQSimulateMultiPage() {
                 handleSelectCourse(c);
               }}
             >
-              <option value="">Chọn Học phần</option>
+              <option value="">-- Chọn Học phần --</option>
               {courses.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.code ? `${c.code} – ${c.title}` : c.title}
@@ -789,7 +791,7 @@ export default function MCQSimulateMultiPage() {
               ))}
             </select>
             <p className="mt-1 text-[11px] text-slate-500">
-              Chỉ hiển thị các Học phần do bạn sở hữu.
+              Chỉ hiển thị các Học phần mà bạn sở hữu.
             </p>
           </div>
 
@@ -809,7 +811,7 @@ export default function MCQSimulateMultiPage() {
               disabled={!selectedCourse}
             >
               <option value="">
-                {selectedCourse ? "Chọn Bài học" : "Chọn Học phần trước"}
+                {selectedCourse ? "-- Chọn Bài học --" : "Chọn Học phần trước"}
               </option>
               {lessons.map((l) => (
                 <option key={l.id} value={l.id}>
@@ -821,7 +823,9 @@ export default function MCQSimulateMultiPage() {
               Lesson giúp thu hẹp LLO và Assessment Unit tương ứng.
             </p>
           </div>
+        </div>
 
+        <div className="grid md:grid-cols-2 gap-4 text-xs">
           {/* LLO */}
           <div>
             <label className="block text-[11px] font-medium text-slate-600 mb-1">
@@ -829,20 +833,20 @@ export default function MCQSimulateMultiPage() {
             </label>
             <select
               className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 disabled:bg-slate-50"
-              value={selectedLLO?.id ?? ""}
+              value={selectedLlo?.id ?? ""}
               onChange={(e) => {
                 const id = e.target.value;
-                const l = llosForCurrentLesson.find((ll) => ll.id === id) || null;
-                handleSelectLLO(l);
+                const llo = llos.find((ll) => ll.id === id) || null;
+                handleSelectLlo(llo);
               }}
               disabled={!selectedLesson}
             >
               <option value="">
-                {selectedLesson ? "Chọn LLO" : "Chọn Bài học trước"}
+                {selectedLesson ? "-- Chọn LLO --" : "Chọn Bài học trước"}
               </option>
-              {llosForCurrentLesson.map((l) => (
+              {llos.map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.code ? `${l.code} – ${l.text}` : l.text}
+                  {l.text}
                 </option>
               ))}
             </select>
@@ -858,18 +862,18 @@ export default function MCQSimulateMultiPage() {
             </label>
             <select
               className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 disabled:bg-slate-50"
-              value={selectedAU?.id ?? ""}
+              value={selectedAu?.id ?? ""}
               onChange={(e) => {
                 const id = e.target.value;
-                const a = filteredAUs.find((aa) => aa.id === id) || null;
-                handleSelectAU(a);
+                const au = aus.find((aa) => aa.id === id) || null;
+                handleSelectAu(au);
               }}
-              disabled={!selectedLesson}
+              disabled={!selectedLlo}
             >
               <option value="">
-                {selectedLesson ? "Chọn Assessment Unit" : "Chọn Bài học trước"}
+                {selectedLlo ? "-- Chọn Assessment Unit --" : "Chọn LLO trước"}
               </option>
-              {filteredAUs.map((a) => (
+              {aus.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.core_statement}
                 </option>
@@ -882,7 +886,7 @@ export default function MCQSimulateMultiPage() {
         </div>
       </div>
 
-      {/* CARD 2: DANH SÁCH MCQ + TICK */}
+      {/* CARD 2: DANH SÁCH MCQ */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -934,10 +938,7 @@ export default function MCQSimulateMultiPage() {
                     {q.stem}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-0.5">
-                    Đáp án đúng hiện tại:{" "}
-                    <span className="font-semibold">
-                      {q.correct_answer || "(chưa lưu)"}
-                    </span>
+                    Đáp án đúng đang lưu trong mcq_options (label A).
                   </div>
                 </div>
               </label>
@@ -961,11 +962,11 @@ export default function MCQSimulateMultiPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="space-y-1">
                     <div className="text-xs font-semibold text-slate-700">
-                      MCQ: {card.id.slice(0, 8)}...
+                      MCQ: {card.id.slice(0, 8)}…
                     </div>
                     <p className="text-[11px] text-slate-500 max-w-xl">
-                      Chỉnh sửa stem, đáp án và distractor. Sau đó chạy mô
-                      phỏng Monte Carlo và Shapley cho riêng câu này.
+                      Chỉnh sửa stem, đáp án, distractor; sau đó chạy mô phỏng
+                      Monte Carlo và Shapley cho riêng câu này.
                     </p>
                   </div>
 
@@ -983,13 +984,9 @@ export default function MCQSimulateMultiPage() {
                         value={card.simN}
                         onChange={(e) => {
                           const val = parseInt(e.target.value, 10) || 0;
-                          const clamped = Math.min(
-                            Math.max(val, 400),
-                            10000
-                          );
                           updateCard(card.id, (c) => ({
                             ...c,
-                            simN: clamped,
+                            simN: Math.min(Math.max(val, 400), 10000),
                           }));
                         }}
                       />
@@ -1003,7 +1000,7 @@ export default function MCQSimulateMultiPage() {
                     >
                       {card.simLoading
                         ? "Đang mô phỏng..."
-                        : "Chạy mô phỏng với GPT"}
+                        : "Chạy mô phỏng (GPT + Monte Carlo)"}
                     </button>
 
                     <button
@@ -1014,7 +1011,7 @@ export default function MCQSimulateMultiPage() {
                     >
                       {card.saving
                         ? "Đang lưu MCQ..."
-                        : "Lưu MCQ và kết quả"}
+                        : "Lưu MCQ và phân tích"}
                     </button>
                   </div>
                 </div>
@@ -1042,7 +1039,7 @@ export default function MCQSimulateMultiPage() {
 
                     <div>
                       <div className="font-semibold text-slate-800 mb-1">
-                        Explanation (nếu có)
+                        Explanation (nếu cần, dùng cho mô phỏng)
                       </div>
                       <textarea
                         className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
@@ -1122,9 +1119,8 @@ export default function MCQSimulateMultiPage() {
                                       {shap.share_pct.toFixed(1)}%
                                     </span>{" "}
                                     – Wrong:{" "}
-                                    {shap.wrong_pct.toFixed(1)}% – Novice và
-                                    Weak:{" "}
-                                    {shap.novice_pct.toFixed(1)}%
+                                    {shap.wrong_pct.toFixed(1)}% – Novice hoặc
+                                    Weak: {shap.novice_pct.toFixed(1)}%
                                   </div>
                                 )}
                               </div>
@@ -1132,10 +1128,10 @@ export default function MCQSimulateMultiPage() {
                                 type="button"
                                 onClick={() => refineDistractor(card.id, idx)}
                                 disabled={card.refineIndex === idx}
-                                className="text-[11px] text-indigo-700 hover:underline ml-1"
+                                className="text-[11px] text-brand-700 hover:underline ml-1"
                               >
                                 {card.refineIndex === idx
-                                  ? "Đang refine..."
+                                  ? "Refining..."
                                   : "Refine"}
                               </button>
                             </div>
@@ -1160,7 +1156,7 @@ export default function MCQSimulateMultiPage() {
                               Persona
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              Tỉ lệ đúng
+                              % đúng
                             </th>
                             <th className="border px-2 py-1 text-right">
                               N mô phỏng
@@ -1170,7 +1166,9 @@ export default function MCQSimulateMultiPage() {
                         <tbody>
                           {sim.accuracy_summary.map((r) => (
                             <tr key={r.persona}>
-                              <td className="border px-2 py-1">{r.persona}</td>
+                              <td className="border px-2 py-1">
+                                {r.persona}
+                              </td>
                               <td className="border px-2 py-1 text-right">
                                 {(r.accuracy * 100).toFixed(1)}%
                               </td>
@@ -1202,7 +1200,7 @@ export default function MCQSimulateMultiPage() {
                                   {o.label}
                                   {o.is_correct && (
                                     <span className="text-emerald-700 ml-1">
-                                      (đúng)
+                                      (đ)
                                     </span>
                                   )}
                                 </th>
@@ -1212,15 +1210,17 @@ export default function MCQSimulateMultiPage() {
                           <tbody>
                             {sim.personas.map((p) => (
                               <tr key={p.name}>
-                                <td className="border px-2 py-1">{p.name}</td>
+                                <td className="border px-2 py-1">
+                                  {p.name}
+                                </td>
                                 {sim.options.map((o) => (
                                   <td
                                     key={o.label}
                                     className="border px-2 py-1 text-right"
                                   >
-                                    {(
-                                      (p.probs[o.label] ?? 0) * 100
-                                    ).toFixed(1)}
+                                    {((p.probs[o.label] ?? 0) * 100).toFixed(
+                                      1
+                                    )}
                                     %
                                   </td>
                                 ))}
@@ -1250,13 +1250,13 @@ export default function MCQSimulateMultiPage() {
                               Shapley
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              Strength
+                              Strength (%)
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              Tỉ lệ chọn
+                              % tất cả lượt chọn
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              Tỉ lệ Novice và Weak
+                              % Novice + Weak
                             </th>
                           </tr>
                         </thead>
@@ -1269,9 +1269,7 @@ export default function MCQSimulateMultiPage() {
                                 className={isWeak ? "bg-rose-50" : "bg-white"}
                               >
                                 <td className="border px-2 py-1 align-top">
-                                  <div className="font-semibold">
-                                    {r.label}
-                                  </div>
+                                  <div className="font-semibold">{r.label}</div>
                                   <div className="text-gray-700 whitespace-pre-wrap">
                                     {r.text}
                                   </div>
@@ -1305,7 +1303,7 @@ export default function MCQSimulateMultiPage() {
                         }`}
                       >
                         <div className="font-semibold mb-1">
-                          {r.label} – Khuyến nghị
+                          {r.label} – Khuyến nghị:
                         </div>
                         <div className="text-gray-800">{r.recommendation}</div>
                       </div>
