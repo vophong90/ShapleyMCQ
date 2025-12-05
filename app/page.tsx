@@ -16,49 +16,49 @@ const STEPS: StepDef[] = [
     title: "Thiết lập bối cảnh & LLO",
     short: "Chuyên ngành – bậc đào tạo – học phần – bài học – LLO – Bloom",
     bullets: [
-      "Khai báo chuyên ngành, bậc đào tạo, học phần và bài học",
-      "Chuẩn hoá chuẩn đầu ra học tập (LLO) và gán mức Bloom",
-      "Kiểm tra sự phù hợp giữa LLO và mức độ nhận thức"
+      "Khai báo chuyên ngành, bậc đào tạo, học phần và bài học.",
+      "Chuẩn hoá chuẩn đầu ra học tập (LLO) và gán mức Bloom.",
+      "Kiểm tra sự phù hợp giữa LLO và mức độ nhận thức."
     ]
   },
   {
     id: 2,
     title: "Tạo Assessment Units (AU)",
-    short: "AI gợi ý AU từ tài liệu cá nhân",
+    short: "Trích xuất các đơn vị đánh giá từ LLO và tài liệu cá nhân.",
     bullets: [
-      "Upload giáo trình, guideline, slide hoặc tài liệu cá nhân",
-      "GPT gợi ý các Assessment Units (khối kiến thức trọng tâm)",
-      "Giảng viên rà soát, chọn lọc và cố định AU"
+      "Chọn học phần / bài học đã thiết lập ở Bước 1.",
+      "Upload giáo trình, guideline, slide hoặc tài liệu cá nhân (nếu dùng).",
+      "Dùng GPT để gợi ý danh sách AU, sau đó rà soát và cố định AU."
     ]
   },
   {
     id: 3,
     title: "Xây dựng Misconceptions",
-    short: "Sai lầm nhận thức xuất phát từ AU",
+    short: "Sai lầm nhận thức xuất phát từ từng AU.",
     bullets: [
-      "GPT sinh các sai lầm (Mis) từ AU đã chọn",
-      "Chỉnh sửa mô tả sai lầm cốt lõi, gắn với bối cảnh lâm sàng",
-      "Liên kết Mis với AU, chuẩn bị logic distractor"
+      "Chọn AU làm đầu vào cho việc sinh Mis.",
+      "Dùng GPT để gợi ý các sai lầm thường gặp gắn với từng AU.",
+      "Chỉnh sửa, loại bỏ Mis không phù hợp và lưu các Mis quan trọng."
     ]
   },
   {
     id: 4,
     title: "Sinh câu hỏi MCQ",
-    short: "Stem & distractor theo chuẩn USMLE/NBME",
+    short: "Stem & distractor theo chuẩn USMLE/NBME.",
     bullets: [
-      "GPT sinh stem và distractor dựa trên AU + Mis",
-      "Đánh giá cấu trúc câu hỏi theo chuẩn USMLE/NBME",
-      "Kiểm tra mức Bloom và tinh chỉnh trước khi lưu vào ngân hàng"
+      "Chọn AU + Mis để sinh MCQ bằng GPT.",
+      "Kiểm tra mức Bloom của câu hỏi và cấu trúc theo chuẩn USMLE/NBME.",
+      "Chỉnh sửa câu chữ, ngữ cảnh lâm sàng và lưu vào ngân hàng câu hỏi."
     ]
   },
   {
     id: 5,
-    title: "Mô phỏng & phân tích Shapley",
-    short: "Monte Carlo + Shapley value cho distractor",
+    title: "Mô phỏng & Shapley",
+    short: "Monte Carlo + Shapley value cho distractor.",
     bullets: [
-      "Mô phỏng người học ở nhiều mức năng lực khác nhau",
-      "Theo dõi hành vi chọn đáp án của từng distractor",
-      "Tính Shapley Value để đo đóng góp của mỗi distractor"
+      "Chọn bộ đề cần phân tích.",
+      "Mô phỏng người học với nhiều mức năng lực khác nhau.",
+      "Đọc Shapley Value để phát hiện distractor yếu và tinh chỉnh lại câu hỏi."
     ]
   }
 ];
@@ -82,33 +82,20 @@ export default function HomePage() {
             đào tạo y khoa.
           </p>
 
-          {/* Chips tóm tắt – vẫn trung tính, nhưng có điểm nhấn brand */}
-          <div className="flex flex-wrap gap-2 mb-8 text-[11px]">
-            <span className="px-3 py-1 rounded-full border border-brand-200 text-brand-700 bg-brand-50/70">
-              Canh chỉnh LLO & Bloom
-            </span>
-            <span className="px-3 py-1 rounded-full border border-slate-200 text-slate-600">
-              AU & Misconceptions có chủ đích
-            </span>
-            <span className="px-3 py-1 rounded-full border border-slate-200 text-slate-600">
-              MCQ + Monte Carlo + Shapley
-            </span>
-          </div>
-
-          {/* CTA – dùng brand color & link đúng /dashboard */}
+          {/* CTA */}
           <div className="flex gap-3">
             <Link
               href="/dashboard"
               className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700"
             >
-              Bắt đầu Pipeline →
+              Bắt đầu →
             </Link>
-            <a
-              href="#pipeline"
-              className="px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400"
+            <Link
+              href="/guide"
+              className="px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-brand-500 hover:text-brand-700"
             >
-              Xem quy trình chi tiết
-            </a>
+              Hướng dẫn
+            </Link>
           </div>
         </div>
 
@@ -203,20 +190,11 @@ function StepPanel({
 
       {open && (
         <div className="px-4 pb-4 pt-1 border-t border-slate-100 text-sm text-slate-600">
-          {/* hàng chip nhỏ tượng trưng node AI */}
-          <div className="flex gap-2 mb-3">
-            <MiniChip />
-            <MiniChip />
-            <MiniChip />
-          </div>
-
           <ul className="space-y-1 mb-3">
             {step.bullets.map((b, i) => (
               <li key={i}>• {b}</li>
             ))}
           </ul>
-
-          {/* progress tượng trưng cho bước */}
           <div className="border border-slate-200 rounded-lg p-3">
             <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
               <div
@@ -227,14 +205,6 @@ function StepPanel({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function MiniChip() {
-  return (
-    <div className="h-6 px-2 rounded-full border border-slate-200 bg-slate-50 text-[10px] flex items-center text-slate-500">
-      AI node
     </div>
   );
 }
