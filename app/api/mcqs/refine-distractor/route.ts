@@ -15,14 +15,15 @@ export async function POST(req: NextRequest) {
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MCQ_MODEL?.trim() || "gpt-5.1";
-
     if (!apiKey) {
+      console.error("OPENAI_API_KEY không tồn tại trong môi trường server");
       return NextResponse.json(
-        { error: "OPENAI_API_KEY chưa được cấu hình trên server." },
+        { error: "Thiếu OPENAI_API_KEY trên server" },
         { status: 500 }
       );
     }
+
+    const model = (process.env.OPENAI_MCQ_MODEL || "gpt-5.1").trim();
 
     const prompt = `
 Bạn là chuyên gia viết distractor cho câu hỏi trắc nghiệm NBME/USMLE.
@@ -39,7 +40,8 @@ ${text}
 Chỉ trả về distractor mới, KHÔNG giải thích, KHÔNG thêm ghi chú.
 `.trim();
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    // 🚀 Chat Completions – trả về text thường
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -47,21 +49,47 @@ Chỉ trả về distractor mới, KHÔNG giải thích, KHÔNG thêm ghi chú.
       },
       body: JSON.stringify({
         model,
-        input: prompt,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Bạn là chuyên gia viết distractor NBME/USMLE. Chỉ trả lời bằng distractor mới, không giải thích.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
       }),
     });
 
-    const data = await response.json();
-    const out: string | undefined = (data as any)?.output_text;
+    const data = await openaiRes.json().catch(() => null);
 
-    if (!out) {
+    if (!openaiRes.ok) {
+      console.error("OpenAI error tại /api/mcqs/refine-distractor:", data);
+      return NextResponse.json(
+        {
+          error: "Lỗi khi gọi GPT (refine-distractor)",
+          detail: JSON.stringify(data, null, 2),
+        },
+        { status: 500 }
+      );
+    }
+
+    const content: string | undefined = data?.choices?.[0]?.message?.content;
+
+    if (!content || typeof content !== "string") {
+      console.error(
+        "Không có message.content hợp lệ (refine-distractor):",
+        data
+      );
       return NextResponse.json(
         { error: "GPT không trả về distractor mới." },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ refined: out.trim() });
+    return NextResponse.json({ refined: content.trim() }, { status: 200 });
   } catch (err: any) {
     console.error("refine-distractor error:", err);
     return NextResponse.json(
