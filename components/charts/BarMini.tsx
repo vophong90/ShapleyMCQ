@@ -7,7 +7,7 @@ export default function BarMini({ data }: { data: any[] }) {
     <div className="w-full h-12">
       <ResponsiveContainer>
         <BarChart data={data}>
-          <Bar dataKey="count" fill="#0ea5e9" />
+          <Bar dataKey="value" fill="#0ea5e9" />
         </BarChart>
       </ResponsiveContainer>
     </div>
