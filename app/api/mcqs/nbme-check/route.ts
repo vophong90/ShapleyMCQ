@@ -27,14 +27,15 @@ export async function POST(req: NextRequest) {
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MCQ_MODEL?.trim() || "gpt-5.1";
-
     if (!apiKey) {
+      console.error("OPENAI_API_KEY không tồn tại trong môi trường server");
       return NextResponse.json(
-        { error: "OPENAI_API_KEY chưa được cấu hình trên server." },
+        { error: "Thiếu OPENAI_API_KEY trên server" },
         { status: 500 }
       );
     }
+
+    const model = (process.env.OPENAI_MCQ_MODEL || "gpt-5.1").trim();
 
     const { stem, correct_answer, distractors, explanation } = body;
 
@@ -48,7 +49,9 @@ Bạn là chuyên gia NBME/USMLE Item Writing.
 Câu MCQ:
 - Stem: ${stem}
 - Correct answer: ${correct_answer}
-- Distractors: ${distractors.map((d, i) => `(${i + 1}) ${d}`).join("; ")}
+- Distractors: ${distractors
+      .map((d, i) => `(${i + 1}) ${d}`)
+      .join("; ")}
 - Explanation: ${explanation}
 
 YÊU CẦU:
@@ -91,7 +94,8 @@ TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON THUẦN, KHÔNG GIẢI THÍCH THÊM, KHÔN
 }
 `.trim();
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    // 🚀 Chat Completions – JSON mode
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -99,32 +103,61 @@ TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON THUẦN, KHÔNG GIẢI THÍCH THÊM, KHÔN
       },
       body: JSON.stringify({
         model,
-        input: prompt,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Bạn là chuyên gia NBME/USMLE, CHỈ trả lời bằng JSON đúng schema yêu cầu.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
       }),
     });
 
-    const data = await response.json();
-    const text: string | undefined = (data as any)?.output_text;
+    const data = await openaiRes.json().catch(() => null);
 
-    if (!text) {
+    if (!openaiRes.ok) {
+      console.error("OpenAI error tại /api/mcqs/nbme-check:", data);
       return NextResponse.json(
-        { error: "GPT không trả về nội dung NBME check." },
+        {
+          error: "Lỗi khi gọi GPT (nbme-check)",
+          detail: JSON.stringify(data, null, 2),
+        },
+        { status: 500 }
+      );
+    }
+
+    const content = data?.choices?.[0]?.message?.content;
+
+    if (!content || typeof content !== "string") {
+      console.error("Không có message.content hợp lệ (nbme-check):", data);
+      return NextResponse.json(
+        { error: "Không nhận được content hợp lệ từ GPT (nbme-check)" },
         { status: 500 }
       );
     }
 
     let parsed: any;
     try {
-      parsed = JSON.parse(text);
+      parsed = JSON.parse(content);
     } catch (e) {
-      console.error("NBME JSON parse error:", e, text);
+      console.error(
+        "JSON parse error ở /api/mcqs/nbme-check:",
+        e,
+        "raw:",
+        content
+      );
       return NextResponse.json(
-        { error: "JSON GPT trả về sai định dạng", raw: text },
+        { error: "GPT trả về JSON không hợp lệ (nbme-check)", raw: content },
         { status: 500 }
       );
     }
 
-    return NextResponse.json(parsed);
+    return NextResponse.json(parsed, { status: 200 });
   } catch (err: any) {
     console.error("nbme-check error:", err);
     return NextResponse.json(
