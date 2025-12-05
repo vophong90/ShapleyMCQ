@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/** COURSE & LESSON TYPES */
+/** COURSE, LESSON, LLO, AU TYPES */
 type Course = {
   id: string;
   title: string;
@@ -15,9 +15,20 @@ type Lesson = {
   title: string;
 };
 
-type AssessmentUnit = {
+type LLO = {
   id: string;
-  title: string;
+  code: string | null;
+  text: string;
+  lesson_id: string | null;
+};
+
+type AU = {
+  id: string;
+  core_statement: string;
+  short_explanation: string | null;
+  bloom_min: string | null;
+  lesson_id: string | null;
+  llo_id: string | null;
 };
 
 /** MCQ LIST + DETAIL TYPES */
@@ -28,9 +39,17 @@ type MCQListItem = {
   au_id: string | null;
 };
 
-/** SIMULATION TYPES */
+type MCQDetail = {
+  id: string;
+  stem: string;
+  correct_answer: string;
+  explanation: string;
+  distractors: string[];
+};
+
+/** SIMULATION TYPES (giống bản cũ) */
 type SimOption = {
-  label: string; // A, B, C, D
+  label: string; // A, B, C, D...
   text: string;
   is_correct: boolean;
 };
@@ -89,17 +108,15 @@ type MCQCardState = {
 
 const PAGE = 1000;
 
-// ---------- HÀM TÍNH SHAPLEY ----------
+// ---------- HÀM TÍNH SHAPLEY (dùng lại logic cũ, mở rộng tới F) ----------
 function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
   const distractorLabels = sim.options
     .filter((o) => !o.is_correct)
     .map((o) => o.label);
 
-  // Thứ tự B, C, D, E, F...
   const allLabels = ["B", "C", "D", "E", "F"];
   const orderedLabels = allLabels.filter((l) => distractorLabels.includes(l));
 
-  // Đếm số câu sai theo từng distractor
   const wrongCounts: Record<string, number> = {};
   const wrongCountsNovice: Record<string, number> = {};
 
@@ -112,6 +129,7 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
       totalWrongAll++;
       wrongCounts[row.chosen_option] =
         (wrongCounts[row.chosen_option] || 0) + 1;
+
       if (lowAbility.has(row.persona)) {
         totalWrongLow++;
         wrongCountsNovice[row.chosen_option] =
@@ -132,7 +150,7 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
         wrong_pct: 0,
         novice_pct: 0,
         recommendation:
-          "Item quá dễ, hầu hết người học trả lời đúng – khó đánh giá distractor.",
+          "Item quá dễ, hầu hết người học trả lời đúng nên khó đánh giá distractor.",
       };
     });
   }
@@ -199,16 +217,16 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
     let recommendation: string;
     if (share_pct >= 40) {
       recommendation =
-        "Distractor rất mạnh – nên giữ, có vai trò lớn trong việc phân tán câu trả lời sai.";
+        "Distractor rất mạnh, nên giữ vì có vai trò lớn trong việc phân tán câu trả lời sai.";
     } else if (share_pct >= 25) {
       recommendation =
-        "Distractor khá mạnh – nên giữ, có thể tinh chỉnh wording để rõ ràng hơn.";
+        "Distractor khá mạnh, nên giữ và có thể tinh chỉnh diễn đạt để rõ ràng hơn.";
     } else if (share_pct >= 10) {
       recommendation =
-        "Distractor trung bình – có thể giữ nếu cần đủ 4 lựa chọn, cân nhắc cải thiện để hấp dẫn hơn.";
+        "Distractor trung bình, có thể giữ nếu cần đủ bốn lựa chọn và cân nhắc cải thiện để hấp dẫn hơn.";
     } else {
       recommendation =
-        "Distractor yếu – ít đóng góp vào câu sai, cân nhắc thay bằng distractor khác hoặc bỏ.";
+        "Distractor yếu, ít đóng góp vào câu sai, nên cân nhắc thay bằng distractor khác hoặc bỏ.";
     }
 
     rows.push({
@@ -228,8 +246,6 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
 // ===========================
 // COMPONENT BƯỚC 5 – MULTI MCQ
 // ===========================
-type AUFilter = "ALL" | "NO_AU" | string;
-
 export default function MCQSimulateMultiPage() {
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -239,9 +255,11 @@ export default function MCQSimulateMultiPage() {
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
 
-  const [assessmentUnits, setAssessmentUnits] = useState<AssessmentUnit[]>([]);
-  const [auIdsInLesson, setAuIdsInLesson] = useState<string[]>([]);
-  const [selectedAUFilter, setSelectedAUFilter] = useState<AUFilter>("ALL");
+  const [llos, setLlos] = useState<LLO[]>([]);
+  const [selectedLLO, setSelectedLLO] = useState<LLO | null>(null);
+
+  const [aus, setAus] = useState<AU[]>([]);
+  const [selectedAU, setSelectedAU] = useState<AU | null>(null);
 
   const [mcqList, setMcqList] = useState<MCQListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -255,7 +273,6 @@ export default function MCQSimulateMultiPage() {
   useEffect(() => {
     async function init() {
       setInitLoading(true);
-
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id ?? null;
       setUserId(uid);
@@ -293,181 +310,139 @@ export default function MCQSimulateMultiPage() {
     init();
   }, []);
 
-  // ----- helper: load MCQ theo bộ lọc AU -----
-  async function reloadMCQs(filter: AUFilter, auIdsOverride?: string[]) {
-    if (!userId || !selectedCourse) return;
-
-    const auIds = auIdsOverride ?? auIdsInLesson;
-
-    setListLoading(true);
-    setMcqList([]);
-    setSelectedIds(new Set());
-    setCards([]);
-
-    let items: MCQListItem[] = [];
-
-    try {
-      if (filter === "ALL") {
-        // MCQ có gắn AU trong bài học
-        if (auIds.length > 0) {
-          const { data: withAU, error: err1 } = await supabase
-            .from("mcq_items")
-            .select("id, stem, correct_answer, au_id")
-            .eq("owner_id", userId)
-            .eq("course_id", selectedCourse.id)
-            .in("au_id", auIds)
-            .order("created_at", { ascending: false });
-
-          if (err1) {
-            console.error("Error loading MCQ with AU:", err1.message);
-          } else if (withAU) {
-            items = items.concat(withAU as MCQListItem[]);
-          }
-        }
-
-        // MCQ chưa gắn AU (au_id null) trong cùng Học phần
-        const { data: noAU, error: err2 } = await supabase
-          .from("mcq_items")
-          .select("id, stem, correct_answer, au_id")
-          .eq("owner_id", userId)
-          .eq("course_id", selectedCourse.id)
-          .is("au_id", null)
-          .order("created_at", { ascending: false });
-
-        if (err2) {
-          console.error("Error loading MCQ without AU:", err2.message);
-        } else if (noAU) {
-          items = items.concat(noAU as MCQListItem[]);
-        }
-      } else if (filter === "NO_AU") {
-        // Chỉ lấy MCQ chưa gắn AU trong Học phần này
-        const { data, error } = await supabase
-          .from("mcq_items")
-          .select("id, stem, correct_answer, au_id")
-          .eq("owner_id", userId)
-          .eq("course_id", selectedCourse.id)
-          .is("au_id", null)
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          console.error("Error loading MCQ NO_AU:", error.message);
-        } else if (data) {
-          items = data as MCQListItem[];
-        }
-      } else {
-        // filter là id của một AU cụ thể
-        const { data, error } = await supabase
-          .from("mcq_items")
-          .select("id, stem, correct_answer, au_id")
-          .eq("owner_id", userId)
-          .eq("course_id", selectedCourse.id)
-          .eq("au_id", filter)
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          console.error("Error loading MCQ by AU:", error.message);
-        } else if (data) {
-          items = data as MCQListItem[];
-        }
-      }
-    } finally {
-      setMcqList(items);
-      setListLoading(false);
-    }
-  }
-
-  // ----- chọn course → load lessons, clear các thứ -----
+  // ----- chọn course → load lessons + llos, clear các thứ -----
   async function handleSelectCourse(course: Course | null) {
     setSelectedCourse(course);
     setSelectedLesson(null);
+    setSelectedLLO(null);
+    setSelectedAU(null);
 
     setLessons([]);
-    setAssessmentUnits([]);
-    setAuIdsInLesson([]);
-    setSelectedAUFilter("ALL");
-
+    setLlos([]);
+    setAus([]);
     setMcqList([]);
     setSelectedIds(new Set());
     setCards([]);
 
     if (!course || !userId) return;
 
-    let allLessons: Lesson[] = [];
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
+    // load song song lessons + llos
+    const [lessonsRes, lloRes] = await Promise.all([
+      supabase
         .from("lessons")
         .select("id, title")
         .eq("owner_id", userId)
         .eq("course_id", course.id)
-        .order("order_in_course", { ascending: true })
-        .range(from, from + PAGE - 1);
+        .order("order_in_course", { ascending: true }),
+      supabase
+        .from("llos")
+        .select("id, code, text, lesson_id")
+        .eq("owner_id", userId)
+        .eq("course_id", course.id)
+        .order("created_at", { ascending: true }),
+    ]);
 
-      if (error) {
-        console.error("Error loading lessons:", error.message);
-        break;
-      }
-      if (!data || data.length === 0) break;
-      allLessons = allLessons.concat(data as Lesson[]);
-      if (data.length < PAGE) break;
-      from += PAGE;
+    if (!lessonsRes.error && lessonsRes.data) {
+      setLessons(lessonsRes.data as Lesson[]);
+    } else if (lessonsRes.error) {
+      console.error("Error loading lessons:", lessonsRes.error.message);
     }
 
-    setLessons(allLessons);
+    if (!lloRes.error && lloRes.data) {
+      setLlos(lloRes.data as LLO[]);
+    } else if (lloRes.error) {
+      console.error("Error loading LLOs:", lloRes.error.message);
+    }
   }
 
-  // ----- chọn lesson → load AU + MCQ ALL -----
+  // ----- chọn lesson → load AUs, reset LLO, AU, MCQ -----
   async function handleSelectLesson(lesson: Lesson | null) {
     setSelectedLesson(lesson);
-
-    setAssessmentUnits([]);
-    setAuIdsInLesson([]);
-    setSelectedAUFilter("ALL");
+    setSelectedLLO(null);
+    setSelectedAU(null);
+    setAus([]);
     setMcqList([]);
     setSelectedIds(new Set());
     setCards([]);
 
     if (!userId || !selectedCourse || !lesson) return;
 
-    // 1) lấy AU thuộc course + lesson này
-    const { data: auData, error: auError } = await supabase
-      .from("assessment_units")
-      .select("id, title")
-      .eq("owner_id", userId)
-      .eq("course_id", selectedCourse.id)
-      .eq("lesson_id", lesson.id)
-      .order("created_at", { ascending: true });
+    let allAUs: AU[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("assessment_units")
+        .select(
+          "id, core_statement, short_explanation, bloom_min, lesson_id, llo_id"
+        )
+        .eq("owner_id", userId)
+        .eq("course_id", selectedCourse.id)
+        .eq("lesson_id", lesson.id)
+        .order("created_at", { ascending: true })
+        .range(from, from + PAGE - 1);
 
-    if (auError) {
-      console.error("Error loading AUs:", auError.message);
+      if (error) {
+        console.error("Error loading assessment_units:", error.message);
+        break;
+      }
+      if (!data || data.length === 0) break;
+      allAUs = allAUs.concat(data as AU[]);
+      if (data.length < PAGE) break;
+      from += PAGE;
     }
 
-    const aus = (auData as AssessmentUnit[]) || [];
-    setAssessmentUnits(aus);
-    const auIds = aus.map((a) => a.id);
-    setAuIdsInLesson(auIds);
-
-    // 2) load MCQ: tất cả AU trong bài + MCQ chưa gắn AU của Học phần
-    await reloadMCQs("ALL", auIds);
+    setAus(allAUs);
   }
 
-  // ----- đổi filter AU từ dropdown -----
-  async function handleChangeAUFilter(value: string) {
-    let filter: AUFilter;
-    if (value === "ALL") filter = "ALL";
-    else if (value === "NO_AU") filter = "NO_AU";
-    else filter = value;
+  // ----- chọn LLO → chỉ lọc AU trên UI (AUs đã load theo lesson) -----
+  function handleSelectLLO(llo: LLO | null) {
+    setSelectedLLO(llo);
+    setSelectedAU(null);
+    setMcqList([]);
+    setSelectedIds(new Set());
+    setCards([]);
+  }
 
-    setSelectedAUFilter(filter);
-    await reloadMCQs(filter);
+  // filtered AUs theo LLO
+  const filteredAUs = useMemo(() => {
+    if (!selectedLLO) return aus;
+    return aus.filter((a) => a.llo_id === selectedLLO.id);
+  }, [aus, selectedLLO]);
+
+  // ----- chọn AU → load MCQ thuộc AU đó -----
+  async function handleSelectAU(au: AU | null) {
+    setSelectedAU(au);
+    setMcqList([]);
+    setSelectedIds(new Set());
+    setCards([]);
+
+    if (!userId || !selectedCourse || !selectedLesson || !au) return;
+
+    setListLoading(true);
+
+    const { data, error } = await supabase
+      .from("mcq_items")
+      .select("id, stem, correct_answer, au_id")
+      .eq("owner_id", userId)
+      .eq("course_id", selectedCourse.id)
+      .eq("au_id", au.id)
+      .order("created_at", { ascending: false });
+
+    setListLoading(false);
+
+    if (error) {
+      console.error("Error loading MCQs:", error.message);
+      setMcqList([]);
+      return;
+    }
+
+    setMcqList((data as MCQListItem[]) || []);
   }
 
   // ----- load chi tiết 1 MCQ (options + metrics) để thêm card -----
   async function loadMCQCard(item: MCQListItem) {
-    // tránh load trùng
     if (cards.some((c) => c.id === item.id)) return;
 
-    // 1) lấy chi tiết item
     const { data: itemData, error: itemError } = await supabase
       .from("mcq_items")
       .select("id, stem, correct_answer, explanation")
@@ -479,7 +454,6 @@ export default function MCQSimulateMultiPage() {
       return;
     }
 
-    // 2) lấy options theo schema mới: item_id, label, text, is_correct
     const { data: optData, error: optError } = await supabase
       .from("mcq_options")
       .select("label, text, is_correct")
@@ -492,7 +466,6 @@ export default function MCQSimulateMultiPage() {
 
     let correct_answer = itemData.correct_answer as string;
     const explanation = (itemData.explanation as string | null) || "";
-
     let distractors: string[] = [];
 
     if (optData && optData.length > 0) {
@@ -516,7 +489,6 @@ export default function MCQSimulateMultiPage() {
         .map((o) => o.text);
     }
 
-    // 3) (optional) lấy metrics mới nhất
     let simResult: SimResult | null = null;
     let shapleyRows: ShapleyRow[] | null = null;
 
@@ -531,7 +503,8 @@ export default function MCQSimulateMultiPage() {
     if (metricData?.payload) {
       const payload = metricData.payload as any;
       if (payload.simResult) simResult = payload.simResult as SimResult;
-      if (payload.shapleyRows) shapleyRows = payload.shapleyRows as ShapleyRow[];
+      if (payload.shapleyRows)
+        shapleyRows = payload.shapleyRows as ShapleyRow[];
     }
 
     setCards((prev) => [
@@ -542,7 +515,7 @@ export default function MCQSimulateMultiPage() {
         correct_answer,
         explanation,
         distractors,
-        simN: 1200, // default: 6 persona x 200
+        simN: 1200,
         simLoading: false,
         simResult,
         shapleyRows,
@@ -581,7 +554,7 @@ export default function MCQSimulateMultiPage() {
 
     const { stem, correct_answer, explanation, distractors, simN } = card;
     if (!stem.trim() || !correct_answer.trim() || distractors.length === 0) {
-      alert("Thiếu stem / đáp án đúng / distractors.");
+      alert("Thiếu stem, đáp án đúng hoặc distractor.");
       return;
     }
 
@@ -666,24 +639,17 @@ export default function MCQSimulateMultiPage() {
     const card = cards.find((c) => c.id === id);
     if (!card || !userId) return;
 
-    const {
-      stem,
-      correct_answer,
-      explanation,
-      distractors,
-      simResult,
-      shapleyRows,
-    } = card;
+    const { stem, correct_answer, explanation, distractors, simResult, shapleyRows } =
+      card;
 
     if (!stem.trim() || !correct_answer.trim() || distractors.length === 0) {
-      alert("Vui lòng đảm bảo có stem, đáp án đúng và ít nhất 1 distractor.");
+      alert("Vui lòng đảm bảo có stem, đáp án đúng và ít nhất một distractor.");
       return;
     }
 
     updateCard(id, (c) => ({ ...c, saving: true }));
 
     try {
-      // 1) update mcq_items
       const { error: updError } = await supabase
         .from("mcq_items")
         .update({
@@ -700,7 +666,6 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
-      // 2) delete options cũ
       const { error: delError } = await supabase
         .from("mcq_options")
         .delete()
@@ -708,12 +673,11 @@ export default function MCQSimulateMultiPage() {
 
       if (delError) {
         console.error("Error deleting mcq_options:", delError.message);
-        alert("Lỗi khi xóa options cũ.");
+        alert("Lỗi khi xóa mcq_options cũ.");
         updateCard(id, (c) => ({ ...c, saving: false }));
         return;
       }
 
-      // 3) insert options mới: A = correct_answer, B.. = distractors
       const labels = ["A", "B", "C", "D", "E", "F"];
       const rows = [
         {
@@ -735,6 +699,7 @@ export default function MCQSimulateMultiPage() {
       const { error: insError } = await supabase
         .from("mcq_options")
         .insert(rows);
+
       if (insError) {
         console.error("Error inserting mcq_options:", insError.message);
         alert("Lỗi khi lưu mcq_options.");
@@ -742,7 +707,6 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
-      // 4) lưu metrics nếu có
       if (simResult && shapleyRows) {
         const { error: metricError } = await supabase
           .from("mcq_metrics")
@@ -756,11 +720,10 @@ export default function MCQSimulateMultiPage() {
 
         if (metricError) {
           console.error("Error inserting mcq_metrics:", metricError.message);
-          // không break, chỉ log – vì MCQ & options đã lưu ok rồi
         }
       }
 
-      alert("Đã lưu MCQ & phân tích!");
+      alert("Đã lưu MCQ và kết quả phân tích.");
     } catch (e: any) {
       console.error("saveCard error:", e);
       alert("Lỗi server khi lưu MCQ.");
@@ -771,6 +734,11 @@ export default function MCQSimulateMultiPage() {
 
   const totalSelected = useMemo(() => selectedIds.size, [selectedIds]);
 
+  const llosForCurrentLesson = useMemo(() => {
+    if (!selectedLesson) return llos;
+    return llos.filter((l) => l.lesson_id === selectedLesson.id);
+  }, [llos, selectedLesson]);
+
   // ============== UI ==============
   return (
     <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
@@ -778,13 +746,12 @@ export default function MCQSimulateMultiPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
-            Bước 5 – Monte Carlo &amp; Shapley cho MCQ
+            Bước 5 – Monte Carlo và Shapley cho nhiều MCQ
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Chọn Học phần → Bài học → (tuỳ chọn) AU → tick nhiều MCQ để phân
-            tích song song. Mỗi câu MCQ được mô phỏng bởi GPT ở nhiều nhóm
-            người học (persona), sau đó tính Shapley để đánh giá sức mạnh từng
-            distractor.
+            Chọn Học phần, Bài học, LLO, AU rồi tick nhiều MCQ để phân tích
+            song song. Mỗi câu được mô phỏng bởi nhiều nhóm người học và tính
+            Shapley để đánh giá sức mạnh từng distractor.
           </p>
         </div>
         {initLoading && (
@@ -794,12 +761,12 @@ export default function MCQSimulateMultiPage() {
         )}
       </div>
 
-      {/* CARD 1: COURSE & LESSON & AU */}
+      {/* CARD 1: COURSE / LESSON / LLO / AU */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
         <div className="text-xs font-semibold text-slate-700 mb-1">
-          Chọn Học phần, Bài học &amp; AU
+          Chuỗi chọn Học phần, Bài học, LLO và Assessment Unit
         </div>
-        <div className="grid md:grid-cols-3 gap-4 text-xs">
+        <div className="grid md:grid-cols-2 gap-4 text-xs">
           {/* Course */}
           <div>
             <label className="block text-[11px] font-medium text-slate-600 mb-1">
@@ -814,7 +781,7 @@ export default function MCQSimulateMultiPage() {
                 handleSelectCourse(c);
               }}
             >
-              <option value="">-- Chọn Học phần --</option>
+              <option value="">Chọn Học phần</option>
               {courses.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.code ? `${c.code} – ${c.title}` : c.title}
@@ -822,7 +789,7 @@ export default function MCQSimulateMultiPage() {
               ))}
             </select>
             <p className="mt-1 text-[11px] text-slate-500">
-              Chỉ hiển thị các Học phần mà bạn sở hữu.
+              Chỉ hiển thị các Học phần do bạn sở hữu.
             </p>
           </div>
 
@@ -842,7 +809,7 @@ export default function MCQSimulateMultiPage() {
               disabled={!selectedCourse}
             >
               <option value="">
-                {selectedCourse ? "-- Chọn Bài học --" : "Chọn Học phần trước"}
+                {selectedCourse ? "Chọn Bài học" : "Chọn Học phần trước"}
               </option>
               {lessons.map((l) => (
                 <option key={l.id} value={l.id}>
@@ -851,34 +818,65 @@ export default function MCQSimulateMultiPage() {
               ))}
             </select>
             <p className="mt-1 text-[11px] text-slate-500">
-              AU và MCQ sẽ được lọc theo Bài học này.
+              Lesson giúp thu hẹp LLO và Assessment Unit tương ứng.
             </p>
           </div>
 
-          {/* AU filter */}
+          {/* LLO */}
           <div>
             <label className="block text-[11px] font-medium text-slate-600 mb-1">
-              AU (Assessment Unit)
+              Learning Level Outcome (LLO)
             </label>
             <select
               className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 disabled:bg-slate-50"
-              value={selectedAUFilter}
-              onChange={(e) => handleChangeAUFilter(e.target.value)}
+              value={selectedLLO?.id ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                const l = llosForCurrentLesson.find((ll) => ll.id === id) || null;
+                handleSelectLLO(l);
+              }}
               disabled={!selectedLesson}
             >
-              <option value="ALL">
-                -- Tất cả AU của Bài học + MCQ chưa gắn AU --
+              <option value="">
+                {selectedLesson ? "Chọn LLO" : "Chọn Bài học trước"}
               </option>
-              <option value="NO_AU">[MCQ chưa gắn AU trong Học phần]</option>
-              {assessmentUnits.map((au) => (
-                <option key={au.id} value={au.id}>
-                  {au.title}
+              {llosForCurrentLesson.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.code ? `${l.code} – ${l.text}` : l.text}
                 </option>
               ))}
             </select>
             <p className="mt-1 text-[11px] text-slate-500">
-              Nếu chọn [MCQ chưa gắn AU] sẽ lấy các item chỉ gắn Học phần, chưa
-              map với AU.
+              LLO dùng để lọc Assessment Unit trong Bài học này.
+            </p>
+          </div>
+
+          {/* AU */}
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              Assessment Unit (AU)
+            </label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 disabled:bg-slate-50"
+              value={selectedAU?.id ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                const a = filteredAUs.find((aa) => aa.id === id) || null;
+                handleSelectAU(a);
+              }}
+              disabled={!selectedLesson}
+            >
+              <option value="">
+                {selectedLesson ? "Chọn Assessment Unit" : "Chọn Bài học trước"}
+              </option>
+              {filteredAUs.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.core_statement}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              MCQ ở dưới sẽ được lọc theo AU đã chọn.
             </p>
           </div>
         </div>
@@ -889,7 +887,7 @@ export default function MCQSimulateMultiPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-xs font-semibold text-slate-700">
-              Danh sách MCQ trong bộ lọc hiện tại
+              Danh sách MCQ trong Assessment Unit đã chọn
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
               Tick các câu MCQ bạn muốn phân tích. Mỗi câu sẽ xuất hiện ở một
@@ -915,7 +913,7 @@ export default function MCQSimulateMultiPage() {
 
           {!listLoading && mcqList.length === 0 && (
             <div className="p-3 text-slate-400">
-              Chưa có câu MCQ nào cho bộ lọc hiện tại (Bài học &amp; AU).
+              Chưa có câu MCQ nào cho AU này, hoặc chưa gắn AU cho các MCQ.
             </div>
           )}
 
@@ -940,11 +938,6 @@ export default function MCQSimulateMultiPage() {
                     <span className="font-semibold">
                       {q.correct_answer || "(chưa lưu)"}
                     </span>
-                    {q.au_id === null && (
-                      <span className="ml-2 text-[10px] text-amber-700">
-                        [Chưa gắn AU]
-                      </span>
-                    )}
                   </div>
                 </div>
               </label>
@@ -968,11 +961,11 @@ export default function MCQSimulateMultiPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="space-y-1">
                     <div className="text-xs font-semibold text-slate-700">
-                      MCQ: {card.id.slice(0, 8)}…
+                      MCQ: {card.id.slice(0, 8)}...
                     </div>
                     <p className="text-[11px] text-slate-500 max-w-xl">
-                      Chỉnh sửa stem, đáp án, distractors; sau đó chạy mô phỏng
-                      Monte Carlo &amp; Shapley cho riêng câu này.
+                      Chỉnh sửa stem, đáp án và distractor. Sau đó chạy mô
+                      phỏng Monte Carlo và Shapley cho riêng câu này.
                     </p>
                   </div>
 
@@ -990,9 +983,13 @@ export default function MCQSimulateMultiPage() {
                         value={card.simN}
                         onChange={(e) => {
                           const val = parseInt(e.target.value, 10) || 0;
+                          const clamped = Math.min(
+                            Math.max(val, 400),
+                            10000
+                          );
                           updateCard(card.id, (c) => ({
                             ...c,
-                            simN: Math.min(Math.max(val, 400), 10000),
+                            simN: clamped,
                           }));
                         }}
                       />
@@ -1006,7 +1003,7 @@ export default function MCQSimulateMultiPage() {
                     >
                       {card.simLoading
                         ? "Đang mô phỏng..."
-                        : "Chạy mô phỏng (GPT + Monte Carlo)"}
+                        : "Chạy mô phỏng với GPT"}
                     </button>
 
                     <button
@@ -1017,7 +1014,7 @@ export default function MCQSimulateMultiPage() {
                     >
                       {card.saving
                         ? "Đang lưu MCQ..."
-                        : "Lưu MCQ & phân tích"}
+                        : "Lưu MCQ và kết quả"}
                     </button>
                   </div>
                 </div>
@@ -1081,7 +1078,7 @@ export default function MCQSimulateMultiPage() {
 
                     <div>
                       <div className="font-semibold text-slate-800 mb-1">
-                        Distractors (B, C, D...)
+                        Distractor (B, C, D...)
                       </div>
                       <div className="space-y-2">
                         {card.distractors.map((d, idx) => {
@@ -1125,7 +1122,8 @@ export default function MCQSimulateMultiPage() {
                                       {shap.share_pct.toFixed(1)}%
                                     </span>{" "}
                                     – Wrong:{" "}
-                                    {shap.wrong_pct.toFixed(1)}% – Novice/Weak:{" "}
+                                    {shap.wrong_pct.toFixed(1)}% – Novice và
+                                    Weak:{" "}
                                     {shap.novice_pct.toFixed(1)}%
                                   </div>
                                 )}
@@ -1134,10 +1132,10 @@ export default function MCQSimulateMultiPage() {
                                 type="button"
                                 onClick={() => refineDistractor(card.id, idx)}
                                 disabled={card.refineIndex === idx}
-                                className="text-[11px] text-brand-700 hover:underline ml-1"
+                                className="text-[11px] text-indigo-700 hover:underline ml-1"
                               >
                                 {card.refineIndex === idx
-                                  ? "Refining..."
+                                  ? "Đang refine..."
                                   : "Refine"}
                               </button>
                             </div>
@@ -1162,7 +1160,7 @@ export default function MCQSimulateMultiPage() {
                               Persona
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              % đúng
+                              Tỉ lệ đúng
                             </th>
                             <th className="border px-2 py-1 text-right">
                               N mô phỏng
@@ -1204,7 +1202,7 @@ export default function MCQSimulateMultiPage() {
                                   {o.label}
                                   {o.is_correct && (
                                     <span className="text-emerald-700 ml-1">
-                                      (✔)
+                                      (đúng)
                                     </span>
                                   )}
                                 </th>
@@ -1252,13 +1250,13 @@ export default function MCQSimulateMultiPage() {
                               Shapley
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              Strength (%)
+                              Strength
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              % tất cả lượt chọn
+                              Tỉ lệ chọn
                             </th>
                             <th className="border px-2 py-1 text-right">
-                              % Novice+Weak
+                              Tỉ lệ Novice và Weak
                             </th>
                           </tr>
                         </thead>
@@ -1307,11 +1305,9 @@ export default function MCQSimulateMultiPage() {
                         }`}
                       >
                         <div className="font-semibold mb-1">
-                          {r.label} – Khuyến nghị:
+                          {r.label} – Khuyến nghị
                         </div>
-                        <div className="text-gray-800">
-                          {r.recommendation}
-                        </div>
+                        <div className="text-gray-800">{r.recommendation}</div>
                       </div>
                     ))}
                   </div>
