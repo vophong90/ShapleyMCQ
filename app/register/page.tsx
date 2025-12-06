@@ -22,6 +22,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // Tải danh sách chuyên ngành
   useEffect(() => {
     async function loadSpecialties() {
       const { data, error } = await supabase
@@ -66,10 +67,10 @@ export default function RegisterPage() {
 
     setLoading(true);
 
-    // 1) Đăng ký Supabase Auth
+    // 1) Đăng ký user qua Supabase Auth
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email,
-      password
+      password,
     });
 
     if (signUpError) {
@@ -86,12 +87,12 @@ export default function RegisterPage() {
       return;
     }
 
-    // 2) Tạo profile gắn với user + specialty
+    // 2) Tạo profile
     const { error: profileError } = await supabase.from("profiles").upsert({
       id: user.id,
       email,
       name,
-      specialty_id: specialtyId
+      specialty_id: specialtyId,
     });
 
     if (profileError) {
@@ -101,10 +102,20 @@ export default function RegisterPage() {
       return;
     }
 
+    // 3) Gửi email Welcome bằng Resend
+    try {
+      await fetch("/api/email/wwelcome", {
+        method: "POST",
+        body: JSON.stringify({ email, name }),
+      });
+    } catch (err) {
+      console.error("Không gửi được email Welcome:", err);
+    }
+
     setMsg("Đăng ký thành công. Đang chuyển đến Dashboard…");
     setTimeout(() => {
       router.push("/dashboard");
-    }, 800);
+    }, 900);
   }
 
   return (
@@ -112,7 +123,7 @@ export default function RegisterPage() {
       <h1 className="text-2xl font-semibold text-slate-900 mb-2">Đăng ký</h1>
       <p className="text-sm text-slate-600 mb-6">
         Tạo tài khoản để sử dụng ShapleyMCQ Lab. Mỗi tài khoản gắn với một chuyên
-        ngành chính, có thể dùng để lọc câu hỏi theo lĩnh vực sau này.
+        ngành chính để lọc MCQ và phân tích sau này.
       </p>
 
       <form
@@ -188,9 +199,6 @@ export default function RegisterPage() {
               </option>
             ))}
           </select>
-          <p className="mt-1 text-[11px] text-slate-500">
-            Thông tin này sẽ dùng để gắn tag cho MCQ và lọc câu hỏi theo lĩnh vực.
-          </p>
         </div>
 
         {msg && (
