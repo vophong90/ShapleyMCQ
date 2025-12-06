@@ -225,7 +225,6 @@ function MyMcqBankTab({
       setError(null);
 
       try {
-        // Courses (có thể là toàn bộ; nếu muốn filter theo group, có thể chỉnh sau)
         const { data: courseRows, error: courseErr } = await supabase
           .from("courses")
           .select("id, title, code")
@@ -233,7 +232,6 @@ function MyMcqBankTab({
 
         if (courseErr) throw courseErr;
 
-        // Lessons thuộc user (owner_id)
         const { data: lessonRows, error: lessonErr } = await supabase
           .from("lessons")
           .select("id, course_id, title")
@@ -242,7 +240,6 @@ function MyMcqBankTab({
 
         if (lessonErr) throw lessonErr;
 
-        // LLOs thuộc user
         const { data: lloRows, error: lloErr } = await supabase
           .from("llos")
           .select(
@@ -253,7 +250,6 @@ function MyMcqBankTab({
 
         if (lloErr) throw lloErr;
 
-        // MCQ thuộc user
         const { data: mcqRows, error: mcqErr } = await supabase
           .from("mcq_items")
           .select("id, stem, course_id, llo_ids, status, created_at")
@@ -277,7 +273,6 @@ function MyMcqBankTab({
     loadData();
   }, [profileId]);
 
-  // Filter lessons / llos theo course & lesson
   const filteredLessons = useMemo(() => {
     if (!selectedCourseId) return lessons;
     return lessons.filter((l) => l.course_id === selectedCourseId);
@@ -306,7 +301,6 @@ function MyMcqBankTab({
     return map;
   }, [courses]);
 
-  // Filter MCQ
   const filteredMcqs = useMemo(() => {
     let list = mcqs;
 
@@ -618,9 +612,16 @@ function ShareReceiveTab({
           mcqMap.set(m.id, { id: m.id, stem: m.stem })
         );
 
-        const userMap = new Map<string, { id: string; name: string | null; email: string | null }>();
+        const userMap = new Map<
+          string,
+          { id: string; name: string | null; email: string | null }
+        >();
         (userRows || []).forEach((u: any) =>
-          userMap.set(u.id, { id: u.id, name: u.name, email: u.email })
+          userMap.set(u.id, {
+            id: u.id,
+            name: u.name,
+            email: u.email,
+          })
         );
 
         const receivedList: ReceivedShare[] = rows.map((r: any) => {
@@ -695,26 +696,30 @@ function ShareReceiveTab({
 
       const mcqArray = Array.from(selectedMcqIds);
 
-      const payload = mcqArray.map((mcqId) => ({
-        mcq_item_id: mcqId,
-        from_user_id: profile.id,
-        to_user_id: selectedUser.id,
-      }));
+      const res = await fetch("/api/mcq/share", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${profile.id}`,
+        },
+        body: JSON.stringify({
+          to_profile_id: selectedUser.id,
+          mcq_item_ids: mcqArray,
+        }),
+      });
 
-      const { error: insertErr } = await supabase
-        .from("mcq_item_shares")
-        .insert(payload);
-
-      if (insertErr) throw insertErr;
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Lỗi khi chia sẻ MCQ (API).");
+      }
 
       setMessage(
-        `Đã gửi ${mcqArray.length} câu hỏi tới ${selectedUser.email || selectedUser.name}.`
+        data.message ||
+          `Đã gửi ${mcqArray.length} câu hỏi tới ${
+            selectedUser.email || selectedUser.name
+          }.`
       );
       onSharedSuccessfully();
-
-      // refresh danh sách nhận (nếu user gửi cho người khác thì không ảnh hưởng tab này,
-      // nhưng để sync nếu sau này có logic share cho chính mình / test)
-      // ở đây có thể bỏ nếu muốn.
     } catch (e: any) {
       console.error(e);
       setError(e.message ?? "Lỗi khi chia sẻ MCQ.");
