@@ -1,7 +1,9 @@
+// app/exam-blueprints/[blueprintId]/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import {
   PieChart,
@@ -33,7 +35,6 @@ type ExamBlueprint = {
   id: string;
   title: string;
   description: string | null;
-  group_id: string;
   owner_id: string;
   config: BlueprintConfig;
 };
@@ -82,7 +83,7 @@ function BloomDonutChart({ data }: { data: BloomStat[] }) {
             ))}
           </Pie>
           <Tooltip
-            formatter={(value: any) => `${value.toFixed?.(1) ?? value}%`}
+            formatter={(value: any) => `${value?.toFixed?.(1) ?? value}%`}
           />
           <Legend />
         </PieChart>
@@ -124,19 +125,24 @@ export default function ExamBlueprintDetailPage() {
 
         const { data, error: bpErr } = await supabase
           .from("exam_blueprints")
-          .select("*")
+          .select("id, title, description, owner_id, config")
           .eq("id", blueprintId)
           .single();
 
-        if (bpErr) throw bpErr;
+        if (bpErr || !data) {
+          throw bpErr || new Error("Không tìm thấy blueprint.");
+        }
 
-        const config = data.config as BlueprintConfig;
+        const config = (data.config || {
+          course_id: null,
+          total_questions: 0,
+          llo_distribution: [],
+        }) as BlueprintConfig;
 
         const bp: ExamBlueprint = {
           id: data.id,
           title: data.title,
           description: data.description,
-          group_id: data.group_id,
           owner_id: data.owner_id,
           config,
         };
@@ -202,19 +208,35 @@ export default function ExamBlueprintDetailPage() {
     );
   }
 
-  if (error || !blueprint) {
+  if (error && !blueprint) {
     return (
       <div className="max-w-4xl mx-auto py-10">
-        {error ? <p className="text-red-600">{error}</p> : null}
-        {!blueprint && !error ? <p>Không tìm thấy blueprint.</p> : null}
+        <p className="text-red-600">{error}</p>
+      </div>
+    );
+  }
+
+  if (!blueprint) {
+    return (
+      <div className="max-w-4xl mx-auto py-10">
+        <p>Không tìm thấy blueprint.</p>
       </div>
     );
   }
 
   const cfg = blueprint.config;
+  const hasLlo = (cfg.llo_distribution || []).length > 0;
+  const hasTotalQuestions = (cfg.total_questions || 0) > 0;
+  const canGenerate = hasLlo && hasTotalQuestions;
+
+  const configNotice: string | null = !hasTotalQuestions
+    ? "Blueprint chưa cấu hình tổng số câu. Hãy vào 'Cấu hình Blueprint' để thiết lập."
+    : !hasLlo
+    ? "Blueprint chưa gán LLO và % phân bổ. Hãy vào 'Cấu hình Blueprint' để thiết lập."
+    : null;
 
   return (
-    <div className="max-w-5xl mx-auto py-8 space-y-8">
+    <div className="max-w-5xl mx-auto py-8 space-y-8 px-4">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -226,13 +248,34 @@ export default function ExamBlueprintDetailPage() {
             </p>
           )}
         </div>
-        <button
-          onClick={handleGenerateExam}
-          disabled={generating}
-          className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-60"
-        >
-          {generating ? "Đang tạo đề..." : "Tạo đề từ Blueprint"}
-        </button>
+
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex gap-2">
+            {/* Nút mở trang cấu hình */}
+            <Link
+              href={`/exam-blueprints/${blueprint.id}/config`}
+              className="px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Cấu hình Blueprint
+            </Link>
+
+            {/* Nút tạo đề */}
+            <button
+              onClick={handleGenerateExam}
+              disabled={!canGenerate || generating}
+              className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {generating ? "Đang tạo đề..." : "Tạo đề từ Blueprint"}
+            </button>
+          </div>
+
+          {/* Thông báo nếu chưa config đủ để generate */}
+          {configNotice && (
+            <p className="text-[11px] text-amber-600 text-right">
+              {configNotice}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Tóm tắt config */}
@@ -241,7 +284,9 @@ export default function ExamBlueprintDetailPage() {
         <div className="grid md:grid-cols-3 gap-4 text-sm">
           <div>
             <div className="text-slate-500">Học phần (course_id)</div>
-            <div className="font-medium">{cfg.course_id ?? "Chưa cấu hình"}</div>
+            <div className="font-medium">
+              {cfg.course_id ?? "Chưa cấu hình"}
+            </div>
           </div>
           <div>
             <div className="text-slate-500">Tổng số câu</div>
@@ -270,18 +315,29 @@ export default function ExamBlueprintDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {cfg.llo_distribution.map((l) => (
-                <tr key={l.llo_id} className="border-t border-slate-100">
-                  <td className="py-2 pr-4">
-                    <span className="font-medium">
-                      {l.code || l.llo_id.slice(0, 8)}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4">
-                    {l.weight_percent.toFixed(1)}%
+              {(cfg.llo_distribution || []).length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={2}
+                    className="py-3 text-xs text-slate-500 italic"
+                  >
+                    Chưa có LLO nào được chọn trong blueprint.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                cfg.llo_distribution.map((l) => (
+                  <tr key={l.llo_id} className="border-t border-slate-100">
+                    <td className="py-2 pr-4">
+                      <span className="font-medium">
+                        {l.code || l.llo_id.slice(0, 8)}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4">
+                      {l.weight_percent.toFixed(1)}%
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
