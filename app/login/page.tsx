@@ -24,7 +24,7 @@ export default function LoginPage() {
 
     const { error } = await supabase.auth.signInWithPassword({
       email,
-      password
+      password,
     });
 
     if (error) {
@@ -93,7 +93,14 @@ export default function LoginPage() {
           {loading ? "Đang xử lý..." : "Đăng nhập"}
         </button>
 
+        {/* Link quên mật khẩu */}
         <p className="text-xs text-slate-600 mt-3">
+          <a href="/forgot-password" className="text-brand-600 hover:underline">
+            Quên mật khẩu?
+          </a>
+        </p>
+
+        <p className="text-xs text-slate-600 mt-1">
           Chưa có tài khoản?{" "}
           <a href="/register" className="text-brand-600 hover:underline">
             Đăng ký ngay
