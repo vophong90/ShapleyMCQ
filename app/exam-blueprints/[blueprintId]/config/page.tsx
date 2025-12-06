@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Course = {
@@ -11,221 +11,157 @@ type Course = {
 
 type LLO = {
   id: string;
-  code: string | null;
+  code: string;
   text: string;
 };
 
-type LloConfigRow = {
+type DistributionRow = {
   llo_id: string;
-  code?: string | null;
   weight_percent: number;
 };
 
-type BlueprintConfig = {
-  course_id: string | null;
-  total_questions: number;
-  include_sources?: {
-    own_mcq?: boolean;
-    shared_mcq?: boolean;
-  };
-  llo_distribution: LloConfigRow[];
-};
-
-export default function BlueprintConfigPage() {
-  const params = useParams();
+export default function BlueprintConfigPage({ params }: any) {
+  const blueprintId = params.blueprintId;
   const router = useRouter();
-  const blueprintId = params.blueprintId as string;
+
+  const [user, setUser] = useState<any>(null);
+
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [courseId, setCourseId] = useState<string>("");
+
+  const [llos, setLlos] = useState<LLO[]>([]);
+  const [distribution, setDistribution] = useState<DistributionRow[]>([]);
+
+  const [totalQuestions, setTotalQuestions] = useState<number>(40);
+
+  const [includeOwn, setIncludeOwn] = useState<boolean>(true);
+  const [includeShared, setIncludeShared] = useState<boolean>(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [llos, setLlos] = useState<LLO[]>([]);
-
-  const [courseId, setCourseId] = useState<string | null>(null);
-  const [totalQuestions, setTotalQuestions] = useState<number>(0);
-
-  const [includeOwn, setIncludeOwn] = useState(true);
-  const [includeShared, setIncludeShared] = useState(true);
-
-  const [distribution, setDistribution] = useState<LloConfigRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  // ----------------------------------------------------------------
-  // 1. LOAD blueprint + danh sách học phần của user
-  // ----------------------------------------------------------------
+  // -------------------------------------------------------------
+  // Load user
+  // -------------------------------------------------------------
   useEffect(() => {
-    async function loadInitial() {
-      setLoading(true);
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) setUser(data.user);
+    });
+  }, []);
 
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) throw new Error("Bạn cần đăng nhập.");
+  // -------------------------------------------------------------
+  // Load courses of this user via new API
+  // -------------------------------------------------------------
+  useEffect(() => {
+    if (!user) return;
 
-        // tải blueprint
-        const { data: bp } = await supabase
-          .from("exam_blueprints")
-          .select("*")
-          .eq("id", blueprintId)
-          .single();
+    async function loadCourses() {
+      const res = await fetch(`/api/exams/courses?owner_id=${user.id}`);
+      const json = await res.json();
+      setCourses(json.courses || []);
 
-        if (!bp) throw new Error("Không tìm thấy blueprint.");
-
-        const cfg = bp.config as BlueprintConfig;
-
-        setCourseId(cfg.course_id || null);
-        setTotalQuestions(cfg.total_questions || 0);
-        setIncludeOwn(cfg.include_sources?.own_mcq !== false);
-        setIncludeShared(cfg.include_sources?.shared_mcq !== false);
-        setDistribution(cfg.llo_distribution || []);
-
-        // tải học phần mà user sở hữu
-        const { data: coursesData } = await supabase
-          .from("courses")
-          .select("id, title")
-          .eq("owner_id", user.id);
-
-        setCourses(coursesData || []);
-
-        // nếu blueprint đã có course_id → load LLO
-        if (cfg.course_id) {
-          await loadLLO(cfg.course_id);
-        }
-      } catch (e: any) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
+      // Auto-select first course
+      if (json.courses?.length) {
+        setCourseId(json.courses[0].id);
       }
     }
 
-    loadInitial();
-  }, [blueprintId]);
+    loadCourses();
+  }, [user]);
 
-  // ----------------------------------------------------------------
-  // 2. LOAD LLO theo học phần
-  // ----------------------------------------------------------------
-  async function loadLLO(course_id: string) {
-    setLlos([]);
+  // -------------------------------------------------------------
+  // Load LLO via new API
+  // -------------------------------------------------------------
+  useEffect(() => {
+    if (!courseId) return;
 
-    const { data, error } = await supabase
-      .from("llos")
-      .select("id, code, text")
-      .eq("course_id", course_id)
-      .order("code");
+    async function loadLlos() {
+      const res = await fetch(`/api/exams/llos?course_id=${courseId}`);
+      const json = await res.json();
+      setLlos(json.llos || []);
 
-    if (!error && data) {
-      setLlos(data);
+      // Initialize distribution rows
+      setDistribution(
+        (json.llos || []).map((llo: LLO) => ({
+          llo_id: llo.id,
+          weight_percent: 0,
+        }))
+      );
     }
+
+    loadLlos();
+  }, [courseId]);
+
+  // -------------------------------------------------------------
+  // Auto-calc remaining %
+  // -------------------------------------------------------------
+  function updatePercent(index: number, value: number) {
+    const updated = [...distribution];
+    updated[index].weight_percent = value;
+    setDistribution(updated);
   }
 
-  // ----------------------------------------------------------------
-  // 3. Thêm/xoá LLO khỏi blueprint
-  // ----------------------------------------------------------------
-  function toggleLlo(llo: LLO) {
-    const exists = distribution.find((d) => d.llo_id === llo.id);
+  const totalPercent = distribution.reduce(
+    (s, r) => s + Number(r.weight_percent || 0),
+    0
+  );
 
-    if (exists) {
-      setDistribution((prev) => prev.filter((d) => d.llo_id !== llo.id));
-    } else {
-      setDistribution((prev) => [
-        ...prev,
-        { llo_id: llo.id, code: llo.code, weight_percent: 0 },
-      ]);
-    }
-  }
-
-  function updateWeight(llo_id: string, value: number) {
-    setDistribution((prev) =>
-      prev.map((d) =>
-        d.llo_id === llo_id ? { ...d, weight_percent: value } : d
-      )
-    );
-  }
-
-  // ----------------------------------------------------------------
-  // 4. Lưu config
-  // ----------------------------------------------------------------
+  // -------------------------------------------------------------
+  // Save config (via new API)
+  // -------------------------------------------------------------
   async function saveConfig() {
-    if (!courseId) {
-      setError("Bạn phải chọn học phần.");
-      return;
-    }
-
-    const total = distribution.reduce(
-      (sum, x) => sum + Number(x.weight_percent || 0),
-      0
-    );
-
-    if (Math.abs(total - 100) > 0.01) {
-      setError("Tổng % phân bổ LLO phải bằng 100%.");
+    if (Math.abs(totalPercent - 100) > 0.01) {
+      alert("Tổng % phân bổ LLO phải bằng 100% trước khi lưu.");
       return;
     }
 
     setSaving(true);
-    setError(null);
 
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Chưa đăng nhập.");
+    const payload = {
+      blueprint_id: blueprintId,
+      course_id: courseId,
+      total_questions: totalQuestions,
+      include_sources: {
+        own_mcq: includeOwn,
+        shared_mcq: includeShared,
+      },
+      llo_distribution: distribution,
+    };
 
-      const config: BlueprintConfig = {
-        course_id: courseId,
-        total_questions: totalQuestions,
-        include_sources: {
-          own_mcq: includeOwn,
-          shared_mcq: includeShared,
-        },
-        llo_distribution: distribution,
-      };
+    const res = await fetch("/api/exams/update-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      const { error: updateErr } = await supabase
-        .from("exam_blueprints")
-        .update({ config })
-        .eq("id", blueprintId);
+    const json = await res.json();
 
-      if (updateErr) throw updateErr;
+    setSaving(false);
 
-      router.push(`/exam-blueprints/${blueprintId}`);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
+    if (!json.success) {
+      alert(json.error || "Lỗi lưu cấu hình");
+      return;
     }
+
+    alert("Đã lưu thành công!");
+    router.push(`/exam-blueprints/${blueprintId}`);
   }
 
-  // ----------------------------------------------------------------
-  // UI hiển thị
-  // ----------------------------------------------------------------
-  if (loading)
-    return (
-      <div className="max-w-4xl mx-auto py-10">Đang tải cấu hình...</div>
-    );
-
+  // -------------------------------------------------------------
+  // Render UI
+  // -------------------------------------------------------------
   return (
-    <div className="max-w-5xl mx-auto py-10 space-y-6 px-4">
-      <h1 className="text-2xl font-semibold">Cấu hình Blueprint</h1>
+    <div className="max-w-3xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-4">Cấu hình Blueprint</h1>
 
-      {error && <div className="text-red-600 text-sm">{error}</div>}
-
-      {/* ------------------------------------------------------------ */}
-      {/* CHỌN HỌC PHẦN */}
-      {/* ------------------------------------------------------------ */}
-      <div className="rounded-xl border p-5 bg-white">
-        <h2 className="font-semibold mb-3">1. Chọn học phần</h2>
-
+      {/* Course selector */}
+      <div className="mb-6">
+        <label className="font-semibold">Chọn học phần</label>
         <select
-          value={courseId ?? ""}
-          onChange={async (e) => {
-            const cid = e.target.value;
-            setCourseId(cid);
-            await loadLLO(cid);
-            setDistribution([]);
-          }}
-          className="border rounded-lg px-3 py-2 text-sm"
+          value={courseId}
+          onChange={(e) => setCourseId(e.target.value)}
+          className="border p-2 w-full mt-2 rounded"
         >
-          <option value="">-- Chọn học phần --</option>
           {courses.map((c) => (
             <option key={c.id} value={c.id}>
               {c.title}
@@ -234,125 +170,69 @@ export default function BlueprintConfigPage() {
         </select>
       </div>
 
-      {/* ------------------------------------------------------------ */}
-      {/* CHỌN TỔNG SỐ CÂU */}
-      {/* ------------------------------------------------------------ */}
-      <div className="rounded-xl border p-5 bg-white">
-        <h2 className="font-semibold mb-3">2. Tổng số câu</h2>
-
+      {/* Total questions */}
+      <div className="mb-6">
+        <label className="font-semibold">Số câu hỏi tổng</label>
         <input
           type="number"
           value={totalQuestions}
           onChange={(e) => setTotalQuestions(Number(e.target.value))}
-          className="border rounded-lg px-3 py-2 text-sm w-40"
+          className="border p-2 w-full mt-2 rounded"
         />
       </div>
 
-      {/* ------------------------------------------------------------ */}
-      {/* NGUỒN MCQ */}
-      {/* ------------------------------------------------------------ */}
-      <div className="rounded-xl border p-5 bg-white">
-        <h2 className="font-semibold mb-3">3. Nguồn câu MCQ</h2>
+      {/* Include MCQ options */}
+      <div className="mb-6">
+        <label className="font-semibold block mb-2">Nguồn MCQ</label>
 
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-2">
           <input
             type="checkbox"
             checked={includeOwn}
             onChange={(e) => setIncludeOwn(e.target.checked)}
           />
-          Câu của tôi
+          MCQ tôi tạo
         </label>
 
-        <label className="flex items-center gap-2 text-sm mt-2">
+        <label className="flex items-center gap-2 mt-2">
           <input
             type="checkbox"
             checked={includeShared}
             onChange={(e) => setIncludeShared(e.target.checked)}
           />
-          Câu được chia sẻ cho tôi
+          MCQ được chia sẻ với tôi
         </label>
       </div>
 
-      {/* ------------------------------------------------------------ */}
-      {/* DANH SÁCH LLO */}
-      {/* ------------------------------------------------------------ */}
-      <div className="rounded-xl border p-5 bg-white">
-        <h2 className="font-semibold mb-3">4. Phân bổ LLO (% phải = 100)</h2>
+      {/* LLO distribution */}
+      <h2 className="text-xl font-semibold mt-8 mb-3">Phân bổ theo LLO (%)</h2>
+      <p className="text-gray-600 mb-2">Tổng: {totalPercent}%</p>
 
-        {llos.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            Chưa có LLO cho học phần này.
-          </p>
-        ) : (
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b text-slate-500">
-                <th className="py-2 text-left">Chọn</th>
-                <th className="py-2 text-left">LLO</th>
-                <th className="py-2 text-left w-32">% phân bổ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {llos.map((l) => {
-                const row = distribution.find((d) => d.llo_id === l.id);
-
-                return (
-                  <tr key={l.id} className="border-b last:border-0">
-                    <td className="py-2">
-                      <input
-                        type="checkbox"
-                        checked={!!row}
-                        onChange={() => toggleLlo(l)}
-                      />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <span className="font-semibold">
-                        {l.code || l.id.slice(0, 6)}
-                      </span>
-                      <br />
-                      <span className="text-xs text-slate-500">
-                        {l.text.slice(0, 80)}...
-                      </span>
-                    </td>
-                    <td>
-                      {row ? (
-                        <input
-                          type="number"
-                          value={row.weight_percent}
-                          onChange={(e) =>
-                            updateWeight(l.id, Number(e.target.value))
-                          }
-                          className="border rounded-lg px-2 py-1 text-sm w-20"
-                        />
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-
-        {/* Tổng % */}
-        <div className="mt-3 font-medium">
-          Tổng %:{" "}
-          {distribution
-            .reduce((s, x) => s + Number(x.weight_percent || 0), 0)
-            .toFixed(1)}
-          %
-        </div>
+      <div className="space-y-4">
+        {llos.map((llo, idx) => (
+          <div key={llo.id} className="border p-4 rounded">
+            <div className="font-semibold mb-1">
+              {llo.code} — {llo.text}
+            </div>
+            <input
+              type="number"
+              value={distribution[idx]?.weight_percent || 0}
+              onChange={(e) =>
+                updatePercent(idx, Number(e.target.value) || 0)
+              }
+              className="border p-2 mt-2 w-32 rounded"
+            />{" "}
+            %
+          </div>
+        ))}
       </div>
 
-      {/* ------------------------------------------------------------ */}
-      {/* NÚT LƯU */}
-      {/* ------------------------------------------------------------ */}
-      <div className="flex justify-end">
+      {/* Save button */}
+      <div className="mt-10">
         <button
           onClick={saveConfig}
           disabled={saving}
-          className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-60"
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
         >
           {saving ? "Đang lưu..." : "Lưu cấu hình"}
         </button>
