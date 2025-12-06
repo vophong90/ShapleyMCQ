@@ -21,7 +21,8 @@
     "jszip": "^3.10.1",
     "fast-xml-parser": "^4.5.0",
     "recharts": "^2.10.3",
-    "lucide-react": "^0.460.0"
+    "lucide-react": "^0.460.0",
+    "resend": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "20.11.30",
