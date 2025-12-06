@@ -1,4 +1,3 @@
-// app/exam-blueprints/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -44,6 +43,7 @@ export default function ExamBlueprintListPage() {
   const [newDesc, setNewDesc] = useState("");
   const [newCourseId, setNewCourseId] = useState<string>("");
 
+  /* ------------------ LOAD ALL ------------------ */
   useEffect(() => {
     async function loadAll() {
       try {
@@ -71,10 +71,11 @@ export default function ExamBlueprintListPage() {
 
         setBlueprints((bpData || []) as ExamBlueprintRow[]);
 
-        /* ----- Load Courses ----- */
+        /* ----- Load Courses (owner only) ----- */
         const { data: courseData, error: cErr } = await supabase
           .from("courses")
           .select("id, title, code")
+          .eq("owner_id", user.id)          // 🔴 FIXED: chỉ lấy đúng học phần thuộc user
           .order("title", { ascending: true });
 
         if (cErr) throw cErr;
@@ -129,7 +130,6 @@ export default function ExamBlueprintListPage() {
       const { data: bpReload } = await supabase
         .from("exam_blueprints")
         .select("id, title, description, created_at, config")
-        .eq("owner_id", user.id)
         .order("created_at", { ascending: false });
 
       setBlueprints((bpReload || []) as ExamBlueprintRow[]);
@@ -194,7 +194,8 @@ export default function ExamBlueprintListPage() {
                 <option value="">-- Chọn học phần --</option>
                 {courses.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.code ? `${c.code} – ` : ""}{c.title}
+                    {c.code ? `${c.code} – ` : ""}
+                    {c.title}
                   </option>
                 ))}
               </select>
@@ -220,7 +221,7 @@ export default function ExamBlueprintListPage() {
 
       {/* ----------- BLUEPRINT LIST ----------- */}
       {loading ? (
-        <p className="text-sm text-slate-500">Đang tải blueprint...</p>
+        <p className="text-sm text-slate-500">Đang tải dữ liệu...</p>
       ) : error ? (
         <p className="text-sm text-red-600">{error}</p>
       ) : blueprints.length === 0 ? (
