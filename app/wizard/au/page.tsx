@@ -269,7 +269,9 @@ export default function AUPage() {
     return () => {
       cancelled = true;
     };
-  }, [userId, context?.course_id, context?.lesson_id, selectedLloId]);
+    // NOTE: không đưa selectedLloId vào deps để tránh loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, context?.course_id, context?.lesson_id]);
 
   function persistContext(next: WizardContext) {
     setContext(next);
@@ -311,6 +313,7 @@ export default function AUPage() {
     const courseId = e.target.value || undefined;
     const course = courses.find((c) => c.id === courseId);
     if (!context) return;
+
     const updated: WizardContext = {
       ...context,
       course_id: courseId,
@@ -319,29 +322,38 @@ export default function AUPage() {
       lesson_id: undefined,
       lesson_title: undefined,
     };
+
     persistContext(updated);
     // reset AU tạm & AU đã lưu & LLO (sẽ reload bằng effect)
     setAus([]);
     setSavedAus([]);
     setLlos([]);
     setSelectedLloId(null);
+    setFiles([]);
+    setMsg(null);
+    setError(null);
   }
 
   function handleChangeLesson(e: ChangeEvent<HTMLSelectElement>) {
     const lessonId = e.target.value || undefined;
     const lesson = lessons.find((l) => l.id === lessonId);
     if (!context) return;
+
     const updated: WizardContext = {
       ...context,
       lesson_id: lessonId,
       lesson_title: lesson?.title,
     };
+
     persistContext(updated);
     // reset AU tạm & AU đã lưu & LLO (sẽ reload bằng effect)
     setAus([]);
     setSavedAus([]);
     setLlos([]);
     setSelectedLloId(null);
+    setFiles([]);
+    setMsg(null);
+    setError(null);
   }
 
   function handleFilesChange(e: ChangeEvent<HTMLInputElement>) {
@@ -356,28 +368,17 @@ export default function AUPage() {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
-  // ====== ✅ Tiếp tục sang Bước 3 (Misconceptions) ======
+  // ✅ Tiếp tục sang Bước 3: bỏ điều kiện, click là qua thẳng
   function handleContinue() {
     setError(null);
     setMsg(null);
-
-    if (!context?.course_id || !context.lesson_id) {
-      setError("Vui lòng chọn Học phần và Bài học trước khi tiếp tục.");
-      return;
-    }
-    if (savedAus.length === 0) {
-      setError(
-        "Chưa có AU nào được lưu. Vui lòng sinh và lưu ít nhất 1 AU trước khi tiếp tục."
-      );
-      return;
-    }
     router.push("/wizard/misconcepts");
   }
 
   // ====== ✅ Xóa AU đã lưu ======
   async function handleDeleteSavedAU(auId: string) {
-    if (!userId || !context?.course_id || !context.lesson_id) {
-      setError("Thiếu bối cảnh để xóa AU.");
+    if (!userId) {
+      setError("Thiếu thông tin người dùng để xóa AU.");
       return;
     }
 
@@ -395,7 +396,7 @@ export default function AUPage() {
         .from("assessment_units")
         .delete()
         .eq("id", auId)
-        .eq("owner_id", userId); // tránh xóa nhầm dữ liệu người khác
+        .eq("owner_id", userId);
 
       if (delErr) {
         console.error("Delete saved AU error:", delErr);
@@ -433,6 +434,7 @@ export default function AUPage() {
       );
       return;
     }
+
     if (!context.course_id || !context.lesson_id) {
       setError("Vui lòng chọn Học phần và Bài học trước khi sinh AU.");
       return;
@@ -457,7 +459,8 @@ export default function AUPage() {
 
       if (context.learner_level)
         formData.append("learner_level", context.learner_level);
-      if (context.bloom_level) formData.append("bloom_level", context.bloom_level);
+      if (context.bloom_level)
+        formData.append("bloom_level", context.bloom_level);
       if (context.specialty_name)
         formData.append("specialty_name", context.specialty_name);
       if (context.course_title) formData.append("course_title", context.course_title);
@@ -614,9 +617,7 @@ export default function AUPage() {
         return;
       }
 
-      setMsg(
-        "Đã lưu AU được chọn. Bạn có thể bấm “Tiếp tục → Bước 3” ở footer để sang bước Misconceptions."
-      );
+      setMsg("Đã lưu AU được chọn.");
       setSaveLoading(false);
 
       await reloadSavedAus(
@@ -661,7 +662,7 @@ export default function AUPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6 pb-28">
-      {/* Header (đã bỏ nút điều hướng) */}
+      {/* Header */}
       <div className="flex flex-col gap-2">
         <div>
           <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
@@ -910,9 +911,7 @@ export default function AUPage() {
             disabled={genLoading}
             className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
           >
-            {genLoading
-              ? "Đang sinh AU từ GPT…"
-              : "Sinh AU từ GPT (từ LLO + tài liệu)"}
+            {genLoading ? "Đang sinh AU từ GPT…" : "Sinh AU từ GPT (từ LLO + tài liệu)"}
           </button>
         </div>
       </div>
@@ -963,9 +962,7 @@ export default function AUPage() {
               >
                 <div className="flex justify-between gap-3">
                   <div className="flex-1">
-                    <div className="font-medium text-slate-900">
-                      {au.core_statement}
-                    </div>
+                    <div className="font-medium text-slate-900">{au.core_statement}</div>
                     {au.short_explanation && (
                       <p className="mt-0.5 text-[11px] text-slate-600">
                         {au.short_explanation}
@@ -1039,9 +1036,7 @@ export default function AUPage() {
                 <div className="flex flex-col gap-2">
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold text-slate-800">
-                        AU {idx + 1}
-                      </span>
+                      <span className="font-semibold text-slate-800">AU {idx + 1}</span>
                       <div className="flex gap-2">
                         <button
                           type="button"
@@ -1067,9 +1062,7 @@ export default function AUPage() {
                     <textarea
                       className="w-full border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
                       value={au.core_statement}
-                      onChange={(e) =>
-                        updateAUField(idx, "core_statement", e.target.value)
-                      }
+                      onChange={(e) => updateAUField(idx, "core_statement", e.target.value)}
                       rows={2}
                     />
                   </div>
@@ -1098,9 +1091,7 @@ export default function AUPage() {
                         type="text"
                         className="border rounded-lg px-2 py-1 text-[11px] w-32 outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
                         value={au.bloom_min ?? ""}
-                        onChange={(e) =>
-                          updateAUField(idx, "bloom_min", e.target.value)
-                        }
+                        onChange={(e) => updateAUField(idx, "bloom_min", e.target.value)}
                         placeholder="VD: apply"
                       />
                     </div>
@@ -1123,36 +1114,40 @@ export default function AUPage() {
         </div>
       )}
 
-      {/* ✅ Footer navigation (giống Step 1) */}
+      {/* ✅ Footer navigation – pill style, đồng bộ Step 1, và Tiếp B3 không điều kiện */}
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 backdrop-blur border-t border-slate-200">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={() => router.push("/wizard/context")}
-            className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-700 hover:border-brand-400 hover:text-brand-700"
+            className="
+              px-3 py-1.5
+              rounded-full
+              text-xs font-medium
+              border border-slate-300
+              bg-white text-slate-700
+              hover:border-brand-400 hover:text-brand-700
+              transition
+            "
           >
             ← Quay lại Bước 1
           </button>
 
-          <div className="flex items-center gap-2">
-            {error ? (
-              <span className="text-[11px] text-rose-700">{error}</span>
-            ) : msg ? (
-              <span className="text-[11px] text-emerald-700">{msg}</span>
-            ) : (
-              <span className="text-[11px] text-slate-500">
-                Lưu ít nhất 1 AU để sang Bước 3.
-              </span>
-            )}
-
-            <button
-              type="button"
-              onClick={handleContinue}
-              className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
-            >
-              Tiếp tục → Bước 3
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleContinue}
+            className="
+              px-3.5 py-1.5
+              rounded-full
+              text-xs font-semibold
+              border border-slate-900
+              bg-slate-900 text-white
+              hover:bg-slate-800
+              transition
+            "
+          >
+            Tiếp tục → Bước 3
+          </button>
         </div>
       </div>
     </div>
