@@ -185,7 +185,11 @@ export default function AUPage() {
   }, [userId, context?.course_id]);
 
   // ====== helper reload Saved AUs ======
-  async function reloadSavedAus(currentUserId?: string, courseId?: string, lessonId?: string) {
+  async function reloadSavedAus(
+    currentUserId?: string,
+    courseId?: string,
+    lessonId?: string
+  ) {
     if (!currentUserId || !courseId || !lessonId) {
       setSavedAus([]);
       return;
@@ -193,7 +197,9 @@ export default function AUPage() {
     setLoadingSaved(true);
     const { data, error } = await supabase
       .from("assessment_units")
-      .select("id, core_statement, short_explanation, bloom_min, status, created_at")
+      .select(
+        "id, core_statement, short_explanation, bloom_min, status, created_at"
+      )
       .eq("owner_id", currentUserId)
       .eq("course_id", courseId)
       .eq("lesson_id", lessonId)
@@ -350,7 +356,7 @@ export default function AUPage() {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
-  // ====== ✅ NEW: Tiếp tục sang Bước 3 (Misconceptions) ======
+  // ====== ✅ Tiếp tục sang Bước 3 (Misconceptions) ======
   function handleContinue() {
     setError(null);
     setMsg(null);
@@ -360,20 +366,24 @@ export default function AUPage() {
       return;
     }
     if (savedAus.length === 0) {
-      setError("Chưa có AU nào được lưu. Vui lòng sinh và lưu ít nhất 1 AU trước khi tiếp tục.");
+      setError(
+        "Chưa có AU nào được lưu. Vui lòng sinh và lưu ít nhất 1 AU trước khi tiếp tục."
+      );
       return;
     }
     router.push("/wizard/misconcepts");
   }
 
-  // ====== ✅ NEW: Xóa AU đã lưu ======
+  // ====== ✅ Xóa AU đã lưu ======
   async function handleDeleteSavedAU(auId: string) {
     if (!userId || !context?.course_id || !context.lesson_id) {
       setError("Thiếu bối cảnh để xóa AU.");
       return;
     }
 
-    const ok = window.confirm("Bạn chắc chắn muốn xóa AU này? Thao tác không thể hoàn tác.");
+    const ok = window.confirm(
+      "Bạn chắc chắn muốn xóa AU này? Thao tác không thể hoàn tác."
+    );
     if (!ok) return;
 
     setDeletingId(auId);
@@ -385,7 +395,7 @@ export default function AUPage() {
         .from("assessment_units")
         .delete()
         .eq("id", auId)
-        .eq("owner_id", userId); // thêm owner_id để tránh xóa nhầm dữ liệu người khác
+        .eq("owner_id", userId); // tránh xóa nhầm dữ liệu người khác
 
       if (delErr) {
         console.error("Delete saved AU error:", delErr);
@@ -394,7 +404,6 @@ export default function AUPage() {
         return;
       }
 
-      // update local list ngay cho mượt
       setSavedAus((prev) => prev.filter((x) => x.id !== auId));
       setMsg("Đã xóa AU.");
       setDeletingId(null);
@@ -419,7 +428,9 @@ export default function AUPage() {
 
     const lloLines = getCurrentLloLines();
     if (lloLines.length === 0) {
-      setError("Chưa tìm thấy LLO cho bài học này. Vui lòng đảm bảo đã nhập LLO ở Bước 1.");
+      setError(
+        "Chưa tìm thấy LLO cho bài học này. Vui lòng đảm bảo đã nhập LLO ở Bước 1."
+      );
       return;
     }
     if (!context.course_id || !context.lesson_id) {
@@ -438,16 +449,20 @@ export default function AUPage() {
       const formData = new FormData();
       formData.append("llos_text", llos_text_to_use);
 
-      // ✅ NEW: gửi số lượng AU cần sinh
-      formData.append("au_count", String(Math.max(1, Math.min(40, auCount || 8))));
+      // ✅ gửi số lượng AU cần sinh
+      formData.append(
+        "au_count",
+        String(Math.max(1, Math.min(40, auCount || 8)))
+      );
 
-      if (context.learner_level) formData.append("learner_level", context.learner_level);
+      if (context.learner_level)
+        formData.append("learner_level", context.learner_level);
       if (context.bloom_level) formData.append("bloom_level", context.bloom_level);
-      if (context.specialty_name) formData.append("specialty_name", context.specialty_name);
+      if (context.specialty_name)
+        formData.append("specialty_name", context.specialty_name);
       if (context.course_title) formData.append("course_title", context.course_title);
       if (context.lesson_title) formData.append("lesson_title", context.lesson_title);
 
-      // Gửi kèm toàn bộ files (không lưu, chỉ dùng trong phiên)
       for (const file of files) {
         formData.append("files", file);
       }
@@ -468,7 +483,6 @@ export default function AUPage() {
 
       const rawAus = Array.isArray(data.aus) ? data.aus : [];
 
-      // bộ key để chống trùng với AU đã lưu + AU mới
       const existingKeys = new Set<string>();
       savedAus.forEach((a) => {
         existingKeys.add(normalizeCore(a.core_statement || ""));
@@ -479,10 +493,7 @@ export default function AUPage() {
         const core = (au.core_statement ?? au.text ?? "").toString();
         const norm = normalizeCore(core);
         if (!core.trim()) continue;
-        if (existingKeys.has(norm)) {
-          // bỏ AU trùng với AU cũ đã lưu
-          continue;
-        }
+        if (existingKeys.has(norm)) continue;
         existingKeys.add(norm);
         mapped.push({
           core_statement: core,
@@ -493,10 +504,14 @@ export default function AUPage() {
       }
 
       if (mapped.length === 0) {
-        setError("GPT không sinh được AU mới (có thể trùng với AU đã có). Vui lòng kiểm tra lại LLO hoặc tài liệu.");
+        setError(
+          "GPT không sinh được AU mới (có thể trùng với AU đã có). Vui lòng kiểm tra lại LLO hoặc tài liệu."
+        );
       } else {
         setAus(mapped);
-        setMsg(`Đã sinh được ${mapped.length} AU mới (không trùng với AU đã lưu). Bạn có thể chỉnh sửa, chọn/bỏ chọn trước khi lưu.`);
+        setMsg(
+          `Đã sinh được ${mapped.length} AU mới (không trùng với AU đã lưu). Bạn có thể chỉnh sửa, chọn/bỏ chọn trước khi lưu.`
+        );
       }
 
       setGenLoading(false);
@@ -509,7 +524,9 @@ export default function AUPage() {
 
   // ====== Chỉnh sửa / Xóa AU trong danh sách tạm ======
   function toggleSelectAU(index: number) {
-    setAus((prev) => prev.map((au, i) => (i === index ? { ...au, selected: !au.selected } : au)));
+    setAus((prev) =>
+      prev.map((au, i) => (i === index ? { ...au, selected: !au.selected } : au))
+    );
   }
 
   function updateAUField(
@@ -550,7 +567,9 @@ export default function AUPage() {
     }
 
     if (!context.course_id || !context.lesson_id) {
-      setError("Thiếu Học phần hoặc Bài học trong bối cảnh. Vui lòng thiết lập lại ở Bước 1.");
+      setError(
+        "Thiếu Học phần hoặc Bài học trong bối cảnh. Vui lòng thiết lập lại ở Bước 1."
+      );
       return;
     }
 
@@ -584,7 +603,9 @@ export default function AUPage() {
         status: "draft",
       }));
 
-      const { error: insertError } = await supabase.from("assessment_units").insert(rows);
+      const { error: insertError } = await supabase
+        .from("assessment_units")
+        .insert(rows);
 
       if (insertError) {
         console.error("Insert assessment_units error:", insertError);
@@ -593,11 +614,16 @@ export default function AUPage() {
         return;
       }
 
-      setMsg("Đã lưu AU được chọn. Bạn có thể bấm 'Tiếp tục' để sang bước Misconceptions.");
+      setMsg(
+        "Đã lưu AU được chọn. Bạn có thể bấm “Tiếp tục → Bước 3” ở footer để sang bước Misconceptions."
+      );
       setSaveLoading(false);
 
-      // reload AU đã lưu cho course/lesson hiện tại
-      await reloadSavedAus(userId || session.user.id, context.course_id!, context.lesson_id!);
+      await reloadSavedAus(
+        userId || session.user.id,
+        context.course_id!,
+        context.lesson_id!
+      );
     } catch (e: any) {
       console.error(e);
       setError("Lỗi server khi lưu AU.");
@@ -606,7 +632,6 @@ export default function AUPage() {
   }
 
   // ====== Render ======
-
   if (loading) {
     return (
       <div className="max-w-6xl mx-auto px-6 py-10">
@@ -635,9 +660,9 @@ export default function AUPage() {
   const currentLloLines = getCurrentLloLines();
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+    <div className="max-w-6xl mx-auto px-6 py-8 space-y-6 pb-28">
+      {/* Header (đã bỏ nút điều hướng) */}
+      <div className="flex flex-col gap-2">
         <div>
           <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
             Bước 2 – Assessment Units (AU)
@@ -646,25 +671,6 @@ export default function AUPage() {
             Từ LLO và tài liệu bài học, GPT sẽ gợi ý các Assessment Unit (AU) cốt lõi.
             Bạn có thể chỉnh sửa, xóa, chọn/bỏ chọn AU trước khi lưu xuống hệ thống.
           </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => router.push("/wizard/context")}
-            className="self-start px-3 py-2 rounded-xl border border-slate-300 text-xs text-slate-700 hover:border-brand-400 hover:text-brand-700"
-          >
-            ← Quay lại Bước 1
-          </button>
-
-          {/* ✅ NEW: Continue button (Step 3) */}
-          <button
-            type="button"
-            onClick={handleContinue}
-            className="self-start px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
-          >
-            Tiếp tục → Bước 3
-          </button>
         </div>
       </div>
 
@@ -713,7 +719,8 @@ export default function AUPage() {
           </div>
         </div>
         <p className="text-[11px] text-slate-500 mt-1">
-          Bạn có thể đổi Học phần/Bài học bất kỳ lúc nào. AU đã lưu sẽ hiện bên dưới tương ứng với lựa chọn hiện tại.
+          Bạn có thể đổi Học phần/Bài học bất kỳ lúc nào. AU đã lưu sẽ hiện bên dưới
+          tương ứng với lựa chọn hiện tại.
         </p>
       </div>
 
@@ -765,14 +772,17 @@ export default function AUPage() {
               ))}
             </select>
             <p className="mt-1 text-[11px] text-slate-500">
-              Bước 2 giả định rằng mỗi lần sinh AU là cho một LLO cụ thể. Bạn sẽ chạy lại bước này nếu cần AU cho LLO khác.
+              Bước 2 giả định rằng mỗi lần sinh AU là cho một LLO cụ thể. Bạn sẽ chạy lại
+              bước này nếu cần AU cho LLO khác.
             </p>
           </div>
         )}
 
         <div>
           <div className="flex items-center justify-between mb-1">
-            <div className="text-xs font-semibold text-slate-700">LLO của bài học:</div>
+            <div className="text-xs font-semibold text-slate-700">
+              LLO của bài học:
+            </div>
             <div className="text-[11px] text-slate-500">
               {loadingLLOs ? (
                 <span>Đang tải LLO…</span>
@@ -837,11 +847,12 @@ export default function AUPage() {
                        hover:file:bg-brand-100"
             />
             <p className="mt-1 text-[11px] text-slate-500">
-              Chấp nhận: PDF, Word, PowerPoint, hình ảnh. File không được lưu lên server mà chỉ dùng để GPT phân tích trong phiên làm việc này.
+              Chấp nhận: PDF, Word, PowerPoint, hình ảnh. File không được lưu lên server
+              mà chỉ dùng để GPT phân tích trong phiên làm việc này.
             </p>
           </div>
 
-          {/* ✅ NEW: AU count */}
+          {/* AU count */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
             <label className="block text-[11px] font-medium text-slate-600 mb-1">
               Số lượng AU cần sinh
@@ -899,15 +910,9 @@ export default function AUPage() {
             disabled={genLoading}
             className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
           >
-            {genLoading ? "Đang sinh AU từ GPT…" : "Sinh AU từ GPT (từ LLO + tài liệu)"}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleContinue}
-            className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
-          >
-            Tiếp tục → Bước 3
+            {genLoading
+              ? "Đang sinh AU từ GPT…"
+              : "Sinh AU từ GPT (từ LLO + tài liệu)"}
           </button>
         </div>
       </div>
@@ -932,7 +937,8 @@ export default function AUPage() {
               AU đã lưu cho Học phần/Bài học hiện tại
             </div>
             <p className="text-xs text-slate-600 mt-0.5">
-              Đây là các AU đã sinh và lưu trước đó, dùng cho Misconceptions &amp; MCQ. Bạn vẫn có thể sinh thêm AU mới ở bên trên.
+              Đây là các AU đã sinh và lưu trước đó, dùng cho Misconceptions &amp; MCQ.
+              Bạn vẫn có thể sinh thêm AU mới ở bên trên.
             </p>
           </div>
           <div className="text-[11px] text-slate-500">
@@ -981,7 +987,6 @@ export default function AUPage() {
                       )}
                     </div>
 
-                    {/* ✅ NEW: Delete button */}
                     <button
                       type="button"
                       onClick={() => handleDeleteSavedAU(au.id)}
@@ -1007,7 +1012,8 @@ export default function AUPage() {
                 Các AU sinh mới từ GPT
               </div>
               <p className="text-xs text-slate-600 mt-0.5">
-                Bạn có thể chỉnh sửa nội dung, cập nhật Bloom tối thiểu, bỏ chọn hoặc xóa hẳn từng AU trước khi lưu xuống Supabase.
+                Bạn có thể chỉnh sửa nội dung, cập nhật Bloom tối thiểu, bỏ chọn hoặc
+                xóa hẳn từng AU trước khi lưu xuống Supabase.
               </p>
             </div>
             <div className="text-[11px] text-slate-500">
@@ -1031,7 +1037,6 @@ export default function AUPage() {
                 }
               >
                 <div className="flex flex-col gap-2">
-                  {/* Core statement editable */}
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-semibold text-slate-800">
@@ -1069,7 +1074,6 @@ export default function AUPage() {
                     />
                   </div>
 
-                  {/* Short explanation editable */}
                   <div>
                     <label className="block text-[10px] font-medium text-slate-600 mb-1">
                       Giải thích ngắn (tùy chọn)
@@ -1085,7 +1089,6 @@ export default function AUPage() {
                     />
                   </div>
 
-                  {/* Bloom min editable */}
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-medium text-slate-600">
@@ -1116,6 +1119,31 @@ export default function AUPage() {
             >
               {saveLoading ? "Đang lưu AU…" : "Lưu AU đã chọn"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Footer navigation (giống Step 1) */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 backdrop-blur border-t border-slate-200">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => router.push("/wizard/context")}
+            className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-700 hover:border-brand-400 hover:text-brand-700"
+          >
+            ← Quay lại Bước 1
+          </button>
+
+          <div className="flex items-center gap-2">
+            {error ? (
+              <span className="text-[11px] text-rose-700">{error}</span>
+            ) : msg ? (
+              <span className="text-[11px] text-emerald-700">{msg}</span>
+            ) : (
+              <span className="text-[11px] text-slate-500">
+                Lưu ít nhất 1 AU để sang Bước 3.
+              </span>
+            )}
 
             <button
               type="button"
@@ -1126,7 +1154,7 @@ export default function AUPage() {
             </button>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
