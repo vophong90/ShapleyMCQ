@@ -1,4 +1,3 @@
-// app/api/auth/request-reset/route.ts
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -12,20 +11,18 @@ export async function POST(req: NextRequest) {
     const email = (body?.email as string | undefined)?.trim();
 
     if (!email) {
-      return NextResponse.json(
-        { error: "Thiếu email" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Thiếu email" }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
 
-    // 1. Tìm profile theo email
+    // 1) Tìm profile theo email
+    // ✅ FIX: dùng maybeSingle() để không bị 406 khi không có row
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("id, email, name")
       .eq("email", email)
-      .single();
+      .maybeSingle();
 
     // Vì lý do bảo mật: nếu không tìm thấy user thì vẫn trả success
     if (profileErr || !profile) {
@@ -35,11 +32,11 @@ export async function POST(req: NextRequest) {
 
     const userId = profile.id as string;
 
-    // 2. Tạo token reset ngẫu nhiên
+    // 2) Tạo token reset ngẫu nhiên
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 60 phút
 
-    // 3. Lưu token vào bảng password_reset_tokens (onConflict theo user_id)
+    // 3) Lưu token vào bảng password_reset_tokens (onConflict theo user_id)
     const { error: upsertErr } = await supabase
       .from("password_reset_tokens")
       .upsert(
@@ -60,7 +57,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Gửi email bằng Resend
+    // 4) Gửi email bằng Resend
     const resendApiKey = process.env.RESEND_API_KEY;
     const fromEmail =
       process.env.RESEND_FROM_EMAIL || "ShapleyMCQ Lab <no-reply@tradmed.edu.vn>";
@@ -68,10 +65,7 @@ export async function POST(req: NextRequest) {
 
     if (!resendApiKey) {
       console.error("Thiếu RESEND_API_KEY trong env");
-      return NextResponse.json(
-        { error: "Thiếu cấu hình gửi email" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Thiếu cấu hình gửi email" }, { status: 500 });
     }
 
     const resend = new Resend(resendApiKey);
