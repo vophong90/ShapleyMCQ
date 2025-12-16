@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Course = {
@@ -39,7 +40,13 @@ type MisItem = {
 
 const PAGE = 1000;
 
+// ✅ Routes điều hướng step
+const STEP2_PATH = "/wizard/au";
+const STEP4_PATH = "/wizard/mcq"; // <-- nếu step 4 của bạn khác, sửa tại đây
+
 export default function MisconceptWizard() {
+  const router = useRouter();
+
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
 
@@ -379,9 +386,7 @@ export default function MisconceptWizard() {
       });
 
       if (newMis.length === 0) {
-        alert(
-          "Không có Misconception mới (có thể GPT sinh trùng với Mis cũ)."
-        );
+        alert("Không có Misconception mới (có thể GPT sinh trùng với Mis cũ).");
         return;
       }
 
@@ -547,9 +552,31 @@ export default function MisconceptWizard() {
     [miscons]
   );
 
+  // ✅ Footer actions
+  function handleBackStep2() {
+    router.push(STEP2_PATH);
+  }
+
+  function handleContinueStep4() {
+    // giữ logic “an toàn” tối thiểu giống kiểu Step 2: phải có dữ liệu chính
+    if (!selectedCourse || !selectedLesson || !selectedLlo) {
+      alert("Vui lòng chọn đầy đủ Học phần, Bài học, LLO trước khi tiếp tục.");
+      return;
+    }
+    if (selectedAuIds.size === 0) {
+      alert("Vui lòng tick ít nhất 1 AU trước khi tiếp tục.");
+      return;
+    }
+    if (totalApproved === 0) {
+      alert("Chưa có Mis nào được duyệt. Vui lòng duyệt (tick) ít nhất 1 Mis hoặc lưu Mis trước khi tiếp tục.");
+      return;
+    }
+    router.push(STEP4_PATH);
+  }
+
   // ====== UI ======
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+    <div className="max-w-6xl mx-auto px-6 py-8 space-y-6 pb-24">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
@@ -684,9 +711,7 @@ export default function MisconceptWizard() {
             </label>
             <div className="border rounded-lg max-h-44 overflow-y-auto text-xs">
               {!selectedLlo && (
-                <div className="p-2 text-slate-400">
-                  Chọn LLO để hiển thị AU.
-                </div>
+                <div className="p-2 text-slate-400">Chọn LLO để hiển thị AU.</div>
               )}
               {selectedLlo && aus.length === 0 && (
                 <div className="p-2 text-slate-400">
@@ -783,14 +808,9 @@ export default function MisconceptWizard() {
           </div>
           <div className="text-[11px] text-slate-500 text-right">
             Tổng:{" "}
-            <span className="font-semibold text-slate-800">
-              {miscons.length}
-            </span>{" "}
+            <span className="font-semibold text-slate-800">{miscons.length}</span>{" "}
             Mis (Đã duyệt:{" "}
-            <span className="font-semibold text-emerald-700">
-              {totalApproved}
-            </span>
-            )
+            <span className="font-semibold text-emerald-700">{totalApproved}</span>)
           </div>
         </div>
 
@@ -812,9 +832,7 @@ export default function MisconceptWizard() {
             </div>
             <div className="text-[11px] text-slate-500 text-right">
               DB Mis:{" "}
-              <span className="font-semibold text-slate-800">
-                {dbMiscons.length}
-              </span>
+              <span className="font-semibold text-slate-800">{dbMiscons.length}</span>
             </div>
           </div>
 
@@ -835,7 +853,6 @@ export default function MisconceptWizard() {
                   key={`${m.au_id}-${m.id ?? "db"}-${globalIndex}`}
                   className="p-4 bg-white rounded-2xl border border-slate-200"
                 >
-                  {/* AU label */}
                   {au && (
                     <div className="text-[11px] text-slate-500 mb-1">
                       AU:{" "}
@@ -859,20 +876,14 @@ export default function MisconceptWizard() {
                       <select
                         value={m.error_type}
                         onChange={(e) =>
-                          updateMisItem(
-                            globalIndex,
-                            "error_type",
-                            e.target.value
-                          )
+                          updateMisItem(globalIndex, "error_type", e.target.value)
                         }
                         className="border rounded-lg px-3 py-1 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
                       >
                         <option value="conceptual">Conceptual</option>
                         <option value="procedural">Procedural</option>
                         <option value="bias">Cognitive bias</option>
-                        <option value="clinical_reasoning">
-                          Clinical reasoning
-                        </option>
+                        <option value="clinical_reasoning">Clinical reasoning</option>
                         <option value="terminology">Terminology</option>
                       </select>
 
@@ -881,11 +892,7 @@ export default function MisconceptWizard() {
                           type="checkbox"
                           checked={m.approved}
                           onChange={(e) =>
-                            updateMisItem(
-                              globalIndex,
-                              "approved",
-                              e.target.checked
-                            )
+                            updateMisItem(globalIndex, "approved", e.target.checked)
                           }
                         />
                         Duyệt
@@ -935,9 +942,7 @@ export default function MisconceptWizard() {
             </div>
             <div className="text-[11px] text-slate-500 text-right">
               GPT Mis:{" "}
-              <span className="font-semibold text-slate-800">
-                {gptMiscons.length}
-              </span>
+              <span className="font-semibold text-slate-800">{gptMiscons.length}</span>
             </div>
           </div>
 
@@ -959,7 +964,6 @@ export default function MisconceptWizard() {
                   key={`${m.au_id}-${m.id ?? "gpt"}-${globalIndex}`}
                   className="p-4 bg-white rounded-2xl border border-indigo-200"
                 >
-                  {/* AU label */}
                   {au && (
                     <div className="text-[11px] text-slate-500 mb-1">
                       AU:{" "}
@@ -983,20 +987,14 @@ export default function MisconceptWizard() {
                       <select
                         value={m.error_type}
                         onChange={(e) =>
-                          updateMisItem(
-                            globalIndex,
-                            "error_type",
-                            e.target.value
-                          )
+                          updateMisItem(globalIndex, "error_type", e.target.value)
                         }
                         className="border rounded-lg px-3 py-1 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
                       >
                         <option value="conceptual">Conceptual</option>
                         <option value="procedural">Procedural</option>
                         <option value="bias">Cognitive bias</option>
-                        <option value="clinical_reasoning">
-                          Clinical reasoning
-                        </option>
+                        <option value="clinical_reasoning">Clinical reasoning</option>
                         <option value="terminology">Terminology</option>
                       </select>
 
@@ -1005,11 +1003,7 @@ export default function MisconceptWizard() {
                           type="checkbox"
                           checked={m.approved}
                           onChange={(e) =>
-                            updateMisItem(
-                              globalIndex,
-                              "approved",
-                              e.target.checked
-                            )
+                            updateMisItem(globalIndex, "approved", e.target.checked)
                           }
                         />
                         Duyệt
@@ -1048,12 +1042,10 @@ export default function MisconceptWizard() {
       <div className="bg-white border rounded-2xl shadow-sm p-5 flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="space-y-1 text-slate-700">
           <div>
-            <span className="font-semibold">Tổng AU trong LLO:</span>{" "}
-            {aus.length}
+            <span className="font-semibold">Tổng AU trong LLO:</span> {aus.length}
           </div>
           <div>
-            <span className="font-semibold">AU đã tick:</span>{" "}
-            {selectedAuIds.size}
+            <span className="font-semibold">AU đã tick:</span> {selectedAuIds.size}
           </div>
           <div>
             <span className="font-semibold">Tổng Mis:</span> {miscons.length}
@@ -1072,6 +1064,29 @@ export default function MisconceptWizard() {
           >
             {saving ? "Đang lưu…" : "Lưu Misconceptions"}
           </button>
+        </div>
+      </div>
+
+      {/* ✅ Footer nav (Back Step 2 / Continue Step 4) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/85 backdrop-blur">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={handleBackStep2}
+            className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:border-brand-400 hover:text-brand-700"
+          >
+            ← Quay lại Bước 2
+          </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleContinueStep4}
+              className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
+            >
+              Tiếp tục → Bước 4
+            </button>
+          </div>
         </div>
       </div>
     </div>
