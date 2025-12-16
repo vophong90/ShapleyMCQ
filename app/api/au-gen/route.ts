@@ -57,34 +57,57 @@ export async function POST(req: NextRequest) {
     const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
 
     const prompt = `
-Bạn là chuyên gia giáo dục Y khoa.
+Bạn là chuyên gia thiết kế đánh giá trong giáo dục y khoa.
 
-Nhiệm vụ: Tạo danh sách Assessment Units (AU) – đơn vị kiến thức nhỏ nhất có thể kiểm tra – từ danh sách LLO sau:
+Mục tiêu: Tạo danh sách Assessment Units (AU) — “đơn vị kiến thức nhỏ nhất có thể kiểm tra được” — từ danh sách LLOs.
 
+INPUT
 LLOs:
 ${llos_text}
 
-Ngữ cảnh:
-- Chuyên ngành: ${specialty_name || "không rõ"}
+NGỮ CẢNH
+- Chuyên ngành (specialty): ${specialty_name || "không rõ"}
 - Học phần: ${course_title || "không rõ"}
 - Bài học: ${lesson_title || "không rõ"}
 - Bậc học (learner_level): ${learner_level || "không rõ"}
-- Mức Bloom mục tiêu: ${bloom_level || "không rõ"}
+- Bloom mục tiêu (bloom_level): ${bloom_level || "không rõ"}
 
-Yêu cầu:
-- Mỗi AU phải ngắn, rõ, cụ thể, không mơ hồ.
-- Mỗi AU là một fact/statement độc lập, không ghép 2–3 ý trong một AU.
-- AU phải phù hợp với bậc học ${learner_level || "(nếu có)"}
-- AU phải có dạng có thể kiểm tra bằng MCQ.
+ĐỊNH NGHĨA AU
+- Một AU = 1 mệnh đề/fact/khẳng định độc lập (không gộp 2–3 ý).
+- Có thể kiểm tra bằng MCQ (có “đáp án đúng” rõ).
+- Ngắn, rõ, không mơ hồ, không nêu chung chung.
+- Phù hợp trình độ learner_level.
 
+QUY TẮC BẮT BUỘC THEO CHUYÊN NGÀNH
+1) 100% AU phải thuộc phạm vi hợp lệ của chuyên ngành "${specialty_name || "không rõ"}".
+   - Nếu LLO có nội dung liên chuyên ngành: chỉ lấy phần liên quan trực tiếp đến specialty.
+2) CẤM “trôi chuyên ngành”:
+   - Không được sinh kiến thức của chuyên ngành khác khi LLO không yêu cầu.
+   - Ví dụ: specialty là YHCT thì không sinh guideline tân dược; specialty là Dược thì không sinh kỹ thuật phẫu thuật; specialty là Răng-Hàm-Mặt thì không sinh sản khoa…
+3) Nếu specialty là Y học cổ truyền (YHCT/TCM/Traditional Medicine/Kampo):
+   - Ưu tiên: tứ chẩn, bát cương, tạng phủ, khí-huyết-tân dịch, kinh lạc/huyệt, biện chứng luận trị, pháp trị, phương dược, châm cứu/xoa bóp/dưỡng sinh.
+   - Chỉ dùng kiến thức Tây y khi LLO yêu cầu “đối chiếu/so sánh”.
+4) Nếu specialty không rõ / quá chung chung:
+   - Tạo AU theo “kiến thức y khoa nền tảng” đúng learner_level và bám sát câu chữ LLO; không tự bịa thêm phạm vi mới.
+
+KIỂM SOÁT CHẤT LƯỢNG
+- Mỗi AU phải bám trực tiếp vào ít nhất 1 LLO (không phát minh chủ đề mới).
+- Tránh AU kiểu “hiểu vai trò…”, “biết tầm quan trọng…”. Hãy chuyển thành mệnh đề kiểm tra được.
+- bloom_min: mức Bloom tối thiểu để trả lời đúng MCQ cho AU đó.
+- Thêm trường "specialty_tag" để tự xác nhận AU thuộc specialty (string ngắn).
+- Thêm trường "evidence_anchor": trích 3–12 từ khóa ngắn lấy từ LLO liên quan nhất (để chứng minh không lạc đề).
+
+YÊU CẦU OUTPUT (CHỈ JSON, không thêm chữ ngoài)
 Bạn PHẢI trả lời CHỈ bằng JSON với cấu trúc CHÍNH XÁC sau, không thêm trường khác:
 
 {
   "aus": [
     {
       "core_statement": "string",
-      "short_explanation": "string (có thể null hoặc bỏ)",
-      "bloom_min": "remember|understand|apply|analyze|evaluate|create"
+      "short_explanation": "string|null",
+      "bloom_min": "remember|understand|apply|analyze|evaluate|create",
+      "specialty_tag": "string",
+      "evidence_anchor": ["string","string","string"]
     }
   ]
 }
