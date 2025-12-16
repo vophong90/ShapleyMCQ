@@ -87,9 +87,7 @@ export default function ContextWizardPage() {
   });
 
   // Danh sách LLO để nhập từng dòng + thêm/xóa
-  const [lloList, setLloList] = useState<LloLine[]>([
-    { text: "" }, // ít nhất 1 dòng trống ban đầu
-  ]);
+  const [lloList, setLloList] = useState<LloLine[]>([{ text: "" }]);
 
   // Tạo mới học phần / bài học
   const [newCourseTitle, setNewCourseTitle] = useState("");
@@ -102,6 +100,9 @@ export default function ContextWizardPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // ✅ mới: chỉ cho “Tiếp bước 2” khi đã lưu thành công
+  const [savedOk, setSavedOk] = useState(false);
 
   const [evalResult, setEvalResult] = useState<LloEvalResult | null>(null);
   const [evalLoading, setEvalLoading] = useState(false);
@@ -263,6 +264,7 @@ export default function ContextWizardPage() {
     key: K,
     value: ContextState[K]
   ) {
+    setSavedOk(false); // ✅ bất kỳ thay đổi nào cũng coi như chưa lưu
     setState((prev) => ({
       ...prev,
       [key]: value,
@@ -366,11 +368,125 @@ export default function ContextWizardPage() {
     }
   }
 
+  // ====== Reload / Delete helpers for quick manage ======
+
+  async function reloadCourses() {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const { data, error } = await supabase
+      .from("courses")
+      .select("id, code, title")
+      .eq("owner_id", session.user.id)
+      .order("title", { ascending: true });
+
+    if (error) {
+      console.error("reloadCourses error:", error);
+      return;
+    }
+    setCourses(data || []);
+  }
+
+  async function reloadLessons(courseId: string) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const { data, error } = await supabase
+      .from("lessons")
+      .select("id, title, course_id")
+      .eq("owner_id", session.user.id)
+      .eq("course_id", courseId)
+      .order("order_in_course", { ascending: true });
+
+    if (error) {
+      console.error("reloadLessons error:", error);
+      return;
+    }
+    setLessons(data || []);
+  }
+
+  async function handleDeleteCourse(courseId: string) {
+    setMsg(null);
+
+    const ok = window.confirm(
+      "Xóa Học phần này? Nếu có Bài học/LLO liên quan, hệ thống có thể từ chối xóa tùy theo ràng buộc."
+    );
+    if (!ok) return;
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const { error } = await supabase
+      .from("courses")
+      .delete()
+      .eq("id", courseId)
+      .eq("owner_id", session.user.id);
+
+    if (error) {
+      console.error("delete course error:", error);
+      setMsg("Không xóa được Học phần (có thể đang có bài học/LLO liên quan).");
+      return;
+    }
+
+    setCourses((prev) => prev.filter((c) => c.id !== courseId));
+
+    if (state.course_id === courseId) {
+      handleChange("course_id", "");
+      handleChange("lesson_id", "");
+      setLessons([]);
+    }
+
+    setSavedOk(false);
+    setMsg("Đã xóa Học phần.");
+  }
+
+  async function handleDeleteLesson(lessonId: string) {
+    setMsg(null);
+
+    const ok = window.confirm(
+      "Xóa Bài học này? Nếu có LLO liên quan, hệ thống có thể từ chối xóa tùy theo ràng buộc."
+    );
+    if (!ok) return;
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const { error } = await supabase
+      .from("lessons")
+      .delete()
+      .eq("id", lessonId)
+      .eq("owner_id", session.user.id);
+
+    if (error) {
+      console.error("delete lesson error:", error);
+      setMsg("Không xóa được Bài học (có thể đang có LLO liên quan).");
+      return;
+    }
+
+    setLessons((prev) => prev.filter((l) => l.id !== lessonId));
+
+    if (state.lesson_id === lessonId) {
+      handleChange("lesson_id", "");
+    }
+
+    setSavedOk(false);
+    setMsg("Đã xóa Bài học.");
+  }
+
   // ====== SAVE: tạo course/lesson nếu cần, lưu LLO, lưu context ======
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
     setMsg(null);
+    setEvalError(null);
 
     if (!validate()) return;
 
@@ -413,6 +529,14 @@ export default function ContextWizardPage() {
 
         courseId = data.id;
         setState((prev) => ({ ...prev, course_id: courseId }));
+
+        // refresh list
+        await reloadCourses();
+
+        // sau khi tạo xong course thì tắt chế độ tạo (đỡ gây nhầm)
+        setCreatingCourse(false);
+        setNewCourseTitle("");
+        setNewCourseCode("");
       }
 
       // 2) Lesson
@@ -438,6 +562,13 @@ export default function ContextWizardPage() {
 
         lessonId = data.id;
         setState((prev) => ({ ...prev, lesson_id: lessonId }));
+
+        // refresh list lessons
+        await reloadLessons(courseId);
+
+        // tắt chế độ tạo lesson
+        setCreatingLesson(false);
+        setNewLessonTitle("");
       }
 
       // 3) LLOs – mỗi dòng 1 row
@@ -456,9 +587,7 @@ export default function ContextWizardPage() {
         level_suggested: state.learner_level,
       }));
 
-      const { error: lloError } = await supabase
-        .from("llos")
-        .insert(insertRows);
+      const { error: lloError } = await supabase.from("llos").insert(insertRows);
 
       if (lloError) {
         console.error("Error inserting llos:", lloError);
@@ -484,19 +613,26 @@ export default function ContextWizardPage() {
         );
       }
 
+      // ✅ chỉ lưu, KHÔNG tự chuyển bước
       setMsg(
-        "Đã lưu bối cảnh, Học phần, Bài học và LLO. Chuyển sang Bước 2 (AU)."
+        "Đã lưu bối cảnh, Học phần, Bài học và LLO. Bạn có thể bấm “Tiếp Bước 2”."
       );
+      setSavedOk(true);
       setSaving(false);
-
-      setTimeout(() => {
-        router.push("/wizard/au");
-      }, 800);
     } catch (err: any) {
       console.error("Error in handleSave:", err);
       setMsg("Lỗi không xác định khi lưu dữ liệu.");
       setSaving(false);
     }
+  }
+
+  function handleNextStep2() {
+    setMsg(null);
+    if (!savedOk) {
+      setMsg("Bạn cần bấm “Lưu bối cảnh (Bước 1)” trước khi sang Bước 2.");
+      return;
+    }
+    router.push("/wizard/au");
   }
 
   // ====== GPT: đánh giá LLO & Bloom ======
@@ -689,20 +825,29 @@ export default function ContextWizardPage() {
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCreatingCourse(true);
-                      setNewCourseTitle("");
-                      setNewCourseCode("");
-                      handleChange("course_id", "");
-                      handleChange("lesson_id", "");
-                      setLessons([]);
-                    }}
-                    className="mt-1 text-[11px] text-brand-700 hover:underline"
-                  >
-                    + Tạo Học phần mới
-                  </button>
+                  <div className="flex items-center justify-between mt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreatingCourse(true);
+                        setNewCourseTitle("");
+                        setNewCourseCode("");
+                        handleChange("course_id", "");
+                        handleChange("lesson_id", "");
+                        setLessons([]);
+                      }}
+                      className="text-[11px] text-brand-700 hover:underline"
+                    >
+                      + Tạo Học phần mới
+                    </button>
+                    <button
+                      type="button"
+                      onClick={reloadCourses}
+                      className="text-[11px] text-slate-500 hover:underline"
+                    >
+                      Tải lại
+                    </button>
+                  </div>
                 </>
               ) : (
                 <div className="space-y-2">
@@ -711,14 +856,20 @@ export default function ContextWizardPage() {
                     className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
                     placeholder="Tên Học phần (ví dụ: Châm cứu học 1)"
                     value={newCourseTitle}
-                    onChange={(e) => setNewCourseTitle(e.target.value)}
+                    onChange={(e) => {
+                      setNewCourseTitle(e.target.value);
+                      setSavedOk(false);
+                    }}
                   />
                   <input
                     type="text"
                     className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
                     placeholder="Mã Học phần (tùy chọn, ví dụ: YHCT301)"
                     value={newCourseCode}
-                    onChange={(e) => setNewCourseCode(e.target.value)}
+                    onChange={(e) => {
+                      setNewCourseCode(e.target.value);
+                      setSavedOk(false);
+                    }}
                   />
                   <button
                     type="button"
@@ -755,17 +906,27 @@ export default function ContextWizardPage() {
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCreatingLesson(true);
-                      setNewLessonTitle("");
-                    }}
-                    className="mt-1 text-[11px] text-brand-700 hover:underline"
-                    disabled={!state.course_id && !creatingCourse}
-                  >
-                    + Tạo Bài học mới
-                  </button>
+                  <div className="flex items-center justify-between mt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreatingLesson(true);
+                        setNewLessonTitle("");
+                      }}
+                      className="text-[11px] text-brand-700 hover:underline disabled:opacity-60"
+                      disabled={!state.course_id && !creatingCourse}
+                    >
+                      + Tạo Bài học mới
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => state.course_id && reloadLessons(state.course_id)}
+                      disabled={!state.course_id}
+                      className="text-[11px] text-slate-500 hover:underline disabled:opacity-50"
+                    >
+                      Tải lại
+                    </button>
+                  </div>
                 </>
               ) : (
                 <div className="space-y-2">
@@ -774,7 +935,10 @@ export default function ContextWizardPage() {
                     className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
                     placeholder="Tên Bài học (ví dụ: Châm cứu điều trị đau lưng)"
                     value={newLessonTitle}
-                    onChange={(e) => setNewLessonTitle(e.target.value)}
+                    onChange={(e) => {
+                      setNewLessonTitle(e.target.value);
+                      setSavedOk(false);
+                    }}
                   />
                   <button
                     type="button"
@@ -788,6 +952,117 @@ export default function ContextWizardPage() {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* ✅ Quick manage lists */}
+          <div className="grid md:grid-cols-2 gap-4 pt-2">
+            <div className="bg-white border rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[12px] font-semibold text-slate-800">
+                  Danh sách Học phần
+                </div>
+                <button
+                  type="button"
+                  onClick={reloadCourses}
+                  className="text-[11px] text-slate-500 hover:underline"
+                >
+                  Tải lại
+                </button>
+              </div>
+
+              <div className="max-h-44 overflow-auto space-y-1">
+                {courses.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-slate-50"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleChange("course_id", c.id);
+                        handleChange("lesson_id", "");
+                        setSavedOk(false);
+                      }}
+                      className="text-left text-[12px] text-slate-700 hover:underline flex-1"
+                      title="Chọn học phần này"
+                    >
+                      {c.code ? `${c.code} – ${c.title}` : c.title}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCourse(c.id)}
+                      className="px-2 py-1 rounded-md bg-rose-50 text-rose-700 text-[11px] hover:bg-rose-100"
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                ))}
+
+                {courses.length === 0 && (
+                  <div className="text-[11px] text-slate-500">
+                    Chưa có học phần.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white border rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[12px] font-semibold text-slate-800">
+                  Danh sách Bài học
+                </div>
+                <button
+                  type="button"
+                  onClick={() => state.course_id && reloadLessons(state.course_id)}
+                  disabled={!state.course_id}
+                  className="text-[11px] text-slate-500 hover:underline disabled:opacity-50"
+                >
+                  Tải lại
+                </button>
+              </div>
+
+              <div className="max-h-44 overflow-auto space-y-1">
+                {lessons.map((l) => (
+                  <div
+                    key={l.id}
+                    className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-slate-50"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleChange("lesson_id", l.id);
+                        setSavedOk(false);
+                      }}
+                      className="text-left text-[12px] text-slate-700 hover:underline flex-1"
+                      title="Chọn bài học này"
+                    >
+                      {l.title}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteLesson(l.id)}
+                      className="px-2 py-1 rounded-md bg-rose-50 text-rose-700 text-[11px] hover:bg-rose-100"
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                ))}
+
+                {!state.course_id && (
+                  <div className="text-[11px] text-slate-500">
+                    Chọn một học phần để xem danh sách bài học.
+                  </div>
+                )}
+
+                {state.course_id && lessons.length === 0 && (
+                  <div className="text-[11px] text-slate-500">
+                    Chưa có bài học.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -816,6 +1091,7 @@ export default function ContextWizardPage() {
                   value={item.text}
                   onChange={(e) => {
                     const val = e.target.value;
+                    setSavedOk(false);
                     setLloList((prev) =>
                       prev.map((row, i) =>
                         i === idx ? { ...row, text: val } : row
@@ -826,13 +1102,12 @@ export default function ContextWizardPage() {
                 />
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    setSavedOk(false);
                     setLloList((prev) =>
-                      prev.length === 1
-                        ? [{ text: "" }] // luôn giữ ít nhất 1 dòng
-                        : prev.filter((_, i) => i !== idx)
-                    )
-                  }
+                      prev.length === 1 ? [{ text: "" }] : prev.filter((_, i) => i !== idx)
+                    );
+                  }}
                   className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 text-[11px] hover:bg-rose-100"
                 >
                   Xóa
@@ -843,9 +1118,10 @@ export default function ContextWizardPage() {
 
           <button
             type="button"
-            onClick={() =>
-              setLloList((prev) => [...prev, { text: "" }])
-            }
+            onClick={() => {
+              setSavedOk(false);
+              setLloList((prev) => [...prev, { text: "" }]);
+            }}
             className="mt-2 px-3 py-1.5 rounded-lg border border-dashed border-slate-300 text-[11px] text-slate-700 hover:border-brand-400 hover:text-brand-700"
           >
             + Thêm LLO
@@ -872,12 +1148,23 @@ export default function ContextWizardPage() {
             >
               Quay lại Dashboard
             </button>
+
             <button
               type="submit"
               disabled={saving}
               className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
             >
               {saving ? "Đang lưu…" : "Lưu bối cảnh (Bước 1)"}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleNextStep2}
+              disabled={!savedOk}
+              className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 disabled:opacity-40"
+              title={!savedOk ? "Hãy lưu bối cảnh trước" : "Sang Bước 2"}
+            >
+              Tiếp Bước 2 →
             </button>
           </div>
 
