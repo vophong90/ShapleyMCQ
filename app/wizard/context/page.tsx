@@ -1223,7 +1223,7 @@ export default function ContextWizardPage() {
               "border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
             }
           >
-            Tiếp Bước 2 →
+            Tiếp tục Bước 2 →
           </button>
         </div>
       </div>
