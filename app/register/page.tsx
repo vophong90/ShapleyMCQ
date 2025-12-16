@@ -44,26 +44,11 @@ export default function RegisterPage() {
     e.preventDefault();
     setMsg(null);
 
-    if (!name.trim()) {
-      setMsg("Vui lòng nhập Họ tên.");
-      return;
-    }
-    if (!email.trim()) {
-      setMsg("Vui lòng nhập Email.");
-      return;
-    }
-    if (password.length < 8) {
-      setMsg("Mật khẩu phải ≥ 8 ký tự.");
-      return;
-    }
-    if (password !== pwd2) {
-      setMsg("Nhập lại mật khẩu chưa khớp.");
-      return;
-    }
-    if (!specialtyId) {
-      setMsg("Vui lòng chọn chuyên ngành chính.");
-      return;
-    }
+    if (!name.trim()) return setMsg("Vui lòng nhập Họ tên.");
+    if (!email.trim()) return setMsg("Vui lòng nhập Email.");
+    if (password.length < 8) return setMsg("Mật khẩu phải ≥ 8 ký tự.");
+    if (password !== pwd2) return setMsg("Nhập lại mật khẩu chưa khớp.");
+    if (!specialtyId) return setMsg("Vui lòng chọn chuyên ngành chính.");
 
     setLoading(true);
 
@@ -71,6 +56,9 @@ export default function RegisterPage() {
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: { name }, // lưu name vào metadata (hữu ích cho trigger DB)
+      },
     });
 
     if (signUpError) {
@@ -87,7 +75,7 @@ export default function RegisterPage() {
       return;
     }
 
-    // 2) Tạo profile
+    // 2) Tạo profile (có thể fail nếu chưa có session / bật email confirm)
     const { error: profileError } = await supabase.from("profiles").upsert({
       id: user.id,
       email,
@@ -96,34 +84,39 @@ export default function RegisterPage() {
     });
 
     if (profileError) {
-      console.error(profileError);
-      setMsg("Đăng ký thành công nhưng tạo hồ sơ thất bại: " + profileError.message);
-      setLoading(false);
-      return;
+      // ✅ Không “đứt” app: vẫn cho user tiếp tục.
+      console.warn("Không tạo/upsert được profile ngay sau signUp:", profileError);
     }
 
-    // 3) Gửi email Welcome bằng Resend
+    // 3) Gửi email Welcome
     try {
-      await fetch("/api/email/wwelcome", {
+      await fetch("/api/email/welcome", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, name }),
       });
     } catch (err) {
       console.error("Không gửi được email Welcome:", err);
     }
 
-    setMsg("Đăng ký thành công. Đang chuyển đến Dashboard…");
+    // Nếu dự án bật email confirmation: signUp thường yêu cầu xác minh email trước khi login
+    setMsg(
+      "Đăng ký thành công. Nếu hệ thống yêu cầu xác minh email, vui lòng kiểm tra hộp thư và xác minh trước khi đăng nhập."
+    );
+
+    // Có thể chuyển thẳng dashboard nếu bạn muốn, nhưng thường nên đưa về /login
     setTimeout(() => {
-      router.push("/dashboard");
+      router.push("/login");
     }, 900);
+
+    setLoading(false);
   }
 
   return (
     <div className="max-w-md mx-auto px-4 py-10">
       <h1 className="text-2xl font-semibold text-slate-900 mb-2">Đăng ký</h1>
       <p className="text-sm text-slate-600 mb-6">
-        Tạo tài khoản để sử dụng ShapleyMCQ Lab. Mỗi tài khoản gắn với một chuyên
-        ngành chính để lọc MCQ và phân tích sau này.
+        Tạo tài khoản để sử dụng ShapleyMCQ Lab. Mỗi tài khoản gắn với một chuyên ngành chính để lọc MCQ và phân tích sau này.
       </p>
 
       <form
@@ -131,9 +124,7 @@ export default function RegisterPage() {
         className="bg-white border rounded-2xl shadow-sm p-5 space-y-4"
       >
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
-            Họ tên
-          </label>
+          <label className="block text-xs font-medium text-slate-700 mb-1">Họ tên</label>
           <input
             type="text"
             className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
@@ -144,9 +135,7 @@ export default function RegisterPage() {
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
-            Email
-          </label>
+          <label className="block text-xs font-medium text-slate-700 mb-1">Email</label>
           <input
             type="email"
             className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
@@ -158,9 +147,7 @@ export default function RegisterPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Mật khẩu
-            </label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Mật khẩu</label>
             <input
               type="password"
               className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
@@ -170,9 +157,7 @@ export default function RegisterPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Nhập lại mật khẩu
-            </label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Nhập lại mật khẩu</label>
             <input
               type="password"
               className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
@@ -184,9 +169,7 @@ export default function RegisterPage() {
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
-            Chuyên ngành chính
-          </label>
+          <label className="block text-xs font-medium text-slate-700 mb-1">Chuyên ngành chính</label>
           <select
             className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
             value={specialtyId}
