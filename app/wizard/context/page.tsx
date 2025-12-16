@@ -101,7 +101,7 @@ export default function ContextWizardPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // ✅ mới: chỉ cho “Tiếp bước 2” khi đã lưu thành công
+  // (có thể giữ để hiển thị thông báo sau khi lưu, không dùng để chặn bước)
   const [savedOk, setSavedOk] = useState(false);
 
   const [evalResult, setEvalResult] = useState<LloEvalResult | null>(null);
@@ -264,7 +264,7 @@ export default function ContextWizardPage() {
     key: K,
     value: ContextState[K]
   ) {
-    setSavedOk(false); // ✅ bất kỳ thay đổi nào cũng coi như chưa lưu
+    setSavedOk(false);
     setState((prev) => ({
       ...prev,
       [key]: value,
@@ -368,7 +368,7 @@ export default function ContextWizardPage() {
     }
   }
 
-  // ====== Reload / Delete helpers for quick manage ======
+  // ====== Reload / Delete helpers ======
 
   async function reloadCourses() {
     const {
@@ -530,10 +530,8 @@ export default function ContextWizardPage() {
         courseId = data.id;
         setState((prev) => ({ ...prev, course_id: courseId }));
 
-        // refresh list
         await reloadCourses();
 
-        // sau khi tạo xong course thì tắt chế độ tạo (đỡ gây nhầm)
         setCreatingCourse(false);
         setNewCourseTitle("");
         setNewCourseCode("");
@@ -563,15 +561,13 @@ export default function ContextWizardPage() {
         lessonId = data.id;
         setState((prev) => ({ ...prev, lesson_id: lessonId }));
 
-        // refresh list lessons
         await reloadLessons(courseId);
 
-        // tắt chế độ tạo lesson
         setCreatingLesson(false);
         setNewLessonTitle("");
       }
 
-      // 3) LLOs – mỗi dòng 1 row
+      // 3) LLOs
       if (lloLines.length === 0) {
         setMsg("Không có LLO hợp lệ để lưu.");
         setSaving(false);
@@ -613,10 +609,7 @@ export default function ContextWizardPage() {
         );
       }
 
-      // ✅ chỉ lưu, KHÔNG tự chuyển bước
-      setMsg(
-        "Đã lưu bối cảnh, Học phần, Bài học và LLO. Bạn có thể bấm “Tiếp Bước 2”."
-      );
+      setMsg("Đã lưu bối cảnh, Học phần, Bài học và LLO.");
       setSavedOk(true);
       setSaving(false);
     } catch (err: any) {
@@ -626,12 +619,9 @@ export default function ContextWizardPage() {
     }
   }
 
+  // ✅ Không điều kiện: bấm là qua thẳng Bước 2
   function handleNextStep2() {
     setMsg(null);
-    if (!savedOk) {
-      setMsg("Bạn cần bấm “Lưu bối cảnh (Bước 1)” trước khi sang Bước 2.");
-      return;
-    }
     router.push("/wizard/au");
   }
 
@@ -697,15 +687,14 @@ export default function ContextWizardPage() {
   const cleanLloCount = getCleanLloLines().length;
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+    <div className="max-w-6xl mx-auto px-6 py-8 pb-24 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900 mb-2">
           Bước 1 – Thiết lập bối cảnh câu hỏi
         </h1>
         <p className="text-sm text-slate-600">
-          Chọn chuyên ngành, Học phần, Bài học, bậc đào tạo, mức Bloom và LLO
-          của bài cần ra câu hỏi. Sau đó dùng GPT để đánh giá sự phù hợp của LLO
-          trước khi đi tiếp sang bước AU &amp; Misconceptions.
+          Chọn chuyên ngành, Học phần, Bài học, bậc đào tạo, mức Bloom và LLO của
+          bài cần ra câu hỏi. Sau đó dùng GPT để đánh giá sự phù hợp của LLO.
         </p>
       </div>
 
@@ -815,7 +804,7 @@ export default function ContextWizardPage() {
                     onChange={(e) => {
                       const val = e.target.value;
                       handleChange("course_id", val);
-                      handleChange("lesson_id", ""); // reset lesson khi đổi học phần
+                      handleChange("lesson_id", "");
                     }}
                   >
                     <option value="">-- Chọn học phần --</option>
@@ -920,7 +909,9 @@ export default function ContextWizardPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => state.course_id && reloadLessons(state.course_id)}
+                      onClick={() =>
+                        state.course_id && reloadLessons(state.course_id)
+                      }
                       disabled={!state.course_id}
                       className="text-[11px] text-slate-500 hover:underline disabled:opacity-50"
                     >
@@ -1067,7 +1058,7 @@ export default function ContextWizardPage() {
           </div>
         </div>
 
-        {/* Block 3: LLOs – mỗi dòng một LLO, có nút thêm/xóa */}
+        {/* Block 3: LLOs */}
         <div>
           <div className="flex items-center justify-between mb-1">
             <label className="block text-[13px] font-medium text-slate-700">
@@ -1105,7 +1096,9 @@ export default function ContextWizardPage() {
                   onClick={() => {
                     setSavedOk(false);
                     setLloList((prev) =>
-                      prev.length === 1 ? [{ text: "" }] : prev.filter((_, i) => i !== idx)
+                      prev.length === 1
+                        ? [{ text: "" }]
+                        : prev.filter((_, i) => i !== idx)
                     );
                   }}
                   className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 text-[11px] hover:bg-rose-100"
@@ -1139,34 +1132,15 @@ export default function ContextWizardPage() {
           </div>
         )}
 
+        {/* ✅ Trên card chỉ còn nút Lưu bối cảnh + nút GPT Evaluate */}
         <div className="flex flex-wrap justify-between items-center gap-3 pt-2">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => router.push("/dashboard")}
-              className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-700 hover:border-brand-400 hover:text-brand-700"
-            >
-              Quay lại Dashboard
-            </button>
-
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
-            >
-              {saving ? "Đang lưu…" : "Lưu bối cảnh (Bước 1)"}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleNextStep2}
-              disabled={!savedOk}
-              className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 disabled:opacity-40"
-              title={!savedOk ? "Hãy lưu bối cảnh trước" : "Sang Bước 2"}
-            >
-              Tiếp Bước 2 →
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-medium hover:bg-brand-700 disabled:opacity-60"
+          >
+            {saving ? "Đang lưu…" : "Lưu bối cảnh"}
+          </button>
 
           <button
             type="button"
@@ -1223,6 +1197,27 @@ export default function ContextWizardPage() {
           </div>
         </div>
       )}
+
+      {/* ✅ FOOTER: Quay lại Dashboard + Tiếp Bước 2 */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 backdrop-blur">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard")}
+            className="px-4 py-2 rounded-lg text-sm font-medium border bg-white hover:bg-slate-50"
+          >
+            ← Quay lại Dashboard
+          </button>
+
+          <button
+            type="button"
+            onClick={handleNextStep2}
+            className="px-5 py-2 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800"
+          >
+            Tiếp Bước 2 →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
