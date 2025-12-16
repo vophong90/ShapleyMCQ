@@ -60,12 +60,12 @@ type NbmeResult = {
 
 type EduFitResult = {
   inferred_bloom: string;
-  bloom_match: string; // "good" | "too_low" | "too_high" | string
-  level_fit: string; // "good" | "too_easy" | "too_hard" | string
+  bloom_match: string;
+  level_fit: string;
   summary: string;
   llo_coverage: {
     llo: string;
-    coverage: string; // "direct" | "indirect" | "none" | string
+    coverage: string;
     comment: string;
   }[];
   recommendations: string[];
@@ -114,7 +114,6 @@ export default function MCQWizard() {
   // ========== LOAD CONTEXT & COURSES ==========
 
   useEffect(() => {
-    // load context từ localStorage
     if (typeof window !== "undefined") {
       const saved = window.localStorage.getItem("shapleymcq_context");
       if (saved) {
@@ -255,8 +254,7 @@ export default function MCQWizard() {
     if (!error && data) {
       const arr = data as Miscon[];
       setMiscons(arr);
-      // mặc định chọn tất cả Mis
-      setSelectedMisIdx(arr.map((_, i) => i));
+      setSelectedMisIdx(arr.map((_, i) => i)); // mặc định chọn tất cả
     } else {
       setMiscons([]);
       setSelectedMisIdx([]);
@@ -356,9 +354,7 @@ export default function MCQWizard() {
       return;
     }
 
-    if (json.refined) {
-      updateMCQAt(index, "stem", json.refined);
-    }
+    if (json.refined) updateMCQAt(index, "stem", json.refined);
   }
 
   async function refineDistractor(index: number, di: number) {
@@ -524,7 +520,6 @@ export default function MCQWizard() {
 
       const mcqId = data.id as string;
 
-      // Link LLO nếu có
       if (selectedAU.llo_id) {
         await supabase.from("mcq_item_llos").insert({
           mcq_item_id: mcqId,
@@ -532,13 +527,12 @@ export default function MCQWizard() {
         });
       }
 
-      // Insert options vào mcq_options
-      const labels = ["A", "B", "C", "D", "E", "F"]; // đủ cho 1 đáp án đúng + 5 distractor
+      const labels = ["A", "B", "C", "D", "E", "F"];
 
       const optionRows = [
         {
           item_id: mcqId,
-          label: labels[0], // A = đáp án đúng
+          label: labels[0],
           text: mcq.correct_answer,
           is_correct: true,
           misconception_id: null,
@@ -547,7 +541,7 @@ export default function MCQWizard() {
           .slice(0, labels.length - 1)
           .map((d: string, i: number) => ({
             item_id: mcqId,
-            label: labels[i + 1], // B, C, D...
+            label: labels[i + 1],
             text: d,
             is_correct: false,
             misconception_id: null,
@@ -733,7 +727,7 @@ export default function MCQWizard() {
 
         {/* HAI KHỐI: MISCON – DANH SÁCH MCQ */}
         <div className="grid grid-cols-1 md:grid-cols-[280px,1fr] gap-4 flex-1 overflow-hidden">
-          {/* MISCON (CHỌN MIS) */}
+          {/* MISCON */}
           <div className="bg-white rounded-xl border shadow-sm flex flex-col overflow-hidden">
             <div className="px-3 py-2 border-b text-sm font-semibold">
               Misconceptions (chọn Mis dùng làm distractors)
@@ -791,7 +785,7 @@ export default function MCQWizard() {
                 <div className="text-sm text-gray-500">
                   • Chọn đầy đủ học phần – bài học – LLO – AU – Mis. <br />
                   • Chọn số câu muốn sinh (3–5 gợi ý). <br />
-                  • Tick “Tình huống lâm sàng” nếu muốn dạng clinical vignette.{" "}
+                  • Tick “Tình huống lâm sàng” nếu muốn dạng clinical vignette.
                   <br />
                   • Bấm <b>Generate MCQ (GPT)</b> để xem kết quả ở đây.
                 </div>
@@ -918,8 +912,6 @@ export default function MCQWizard() {
                           ? "Đang edu-fit…"
                           : "Educational Fit (Bloom–bậc–LLO)"}
                       </button>
-
-                      {/* chừa slot cho nút phân tích thứ 3 sau này */}
                     </div>
 
                     {/* KẾT QUẢ NBME */}
@@ -1068,12 +1060,12 @@ export default function MCQWizard() {
         </div>
       </div>
 
-      {/* FOOTER (giống style bạn đang dùng ở Step 3 trong hình) */}
+      {/* FOOTER (đồng bộ, không điều kiện) */}
       <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <button
             onClick={() => router.push("/wizard/misconcepts")}
-            className="px-4 py-2 rounded-lg text-sm font-medium border bg-white hover:bg-slate-50"
+            className="px-5 py-2 rounded-lg text-sm font-semibold border bg-white hover:bg-slate-50"
           >
             ← Quay lại Bước 3
           </button>
@@ -1082,7 +1074,7 @@ export default function MCQWizard() {
             onClick={() => router.push("/wizard/simulate")}
             className="px-5 py-2 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800"
           >
-            Tiếp tục → Bước 5
+            Tiếp tục Bước 5 →
           </button>
         </div>
       </div>
