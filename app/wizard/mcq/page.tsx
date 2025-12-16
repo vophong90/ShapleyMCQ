@@ -1060,20 +1060,29 @@ export default function MCQWizard() {
         </div>
       </div>
 
-      {/* FOOTER (đồng bộ, không điều kiện) */}
+      {/* ✅ FOOTER: pill style đồng bộ Step 1 */}
       <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <button
+            type="button"
             onClick={() => router.push("/wizard/misconcepts")}
-            className="px-5 py-2 rounded-lg text-sm font-semibold border bg-white hover:bg-slate-50"
-          >
+            className={
+              "px-3 py-1.5 rounded-full border transition text-xs font-medium " +
+              "border-slate-300 bg-white text-slate-700 " +
+              "hover:border-brand-400 hover:text-brand-700"
+            }
+            >
             ← Quay lại Bước 3
           </button>
-
+          
           <button
+            type="button"
             onClick={() => router.push("/wizard/simulate")}
-            className="px-5 py-2 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800"
-          >
+            className={
+              "px-3.5 py-1.5 rounded-full border transition text-xs font-semibold " +
+              "border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+            }
+            >
             Tiếp tục Bước 5 →
           </button>
         </div>
