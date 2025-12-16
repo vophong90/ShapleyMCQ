@@ -1006,7 +1006,9 @@ export default function ContextWizardPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => state.course_id && reloadLessons(state.course_id)}
+                  onClick={() =>
+                    state.course_id && reloadLessons(state.course_id)
+                  }
                   disabled={!state.course_id}
                   className="text-[11px] text-slate-500 hover:underline disabled:opacity-50"
                 >
@@ -1198,13 +1200,17 @@ export default function ContextWizardPage() {
         </div>
       )}
 
-      {/* ✅ FOOTER: Quay lại Dashboard + Tiếp Bước 2 */}
+      {/* ✅ FOOTER: pill style giống button trong nội dung */}
       <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
-            className="px-4 py-2 rounded-lg text-sm font-medium border bg-white hover:bg-slate-50"
+            className={
+              "px-3 py-1.5 rounded-full border transition text-xs font-medium " +
+              "border-slate-300 bg-white text-slate-700 " +
+              "hover:border-brand-400 hover:text-brand-700"
+            }
           >
             ← Quay lại Dashboard
           </button>
@@ -1212,7 +1218,10 @@ export default function ContextWizardPage() {
           <button
             type="button"
             onClick={handleNextStep2}
-            className="px-5 py-2 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800"
+            className={
+              "px-3.5 py-1.5 rounded-full border transition text-xs font-semibold " +
+              "border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+            }
           >
             Tiếp Bước 2 →
           </button>
