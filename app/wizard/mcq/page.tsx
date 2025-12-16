@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Course = {
@@ -71,6 +72,8 @@ type EduFitResult = {
 };
 
 export default function MCQWizard() {
+  const router = useRouter();
+
   // ===== Bối cảnh từ Step 1–3 =====
   const [context, setContext] = useState<any | null>(null);
 
@@ -106,8 +109,7 @@ export default function MCQWizard() {
 
   // ===== Điều khiển batch =====
   const [questionCount, setQuestionCount] = useState<number>(3); // 0–10
-  const [clinicalVignette, setClinicalVignette] =
-    useState<boolean>(false);
+  const [clinicalVignette, setClinicalVignette] = useState<boolean>(false);
 
   // ========== LOAD CONTEXT & COURSES ==========
 
@@ -345,9 +347,7 @@ export default function MCQWizard() {
     const res = await fetch("/api/mcqs/refine-stem", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        stem: mcq.stem,
-      }),
+      body: JSON.stringify({ stem: mcq.stem }),
     });
 
     const json = await res.json();
@@ -368,9 +368,7 @@ export default function MCQWizard() {
     const res = await fetch("/api/mcqs/refine-distractor", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: mcq.distractors[di],
-      }),
+      body: JSON.stringify({ text: mcq.distractors[di] }),
     });
 
     const json = await res.json();
@@ -579,7 +577,7 @@ export default function MCQWizard() {
   // ========== RENDER ==========
 
   return (
-    <div className="h-[calc(100vh-60px)] bg-gray-50 p-6">
+    <div className="h-[calc(100vh-60px)] bg-gray-50 p-6 pb-24">
       <div className="max-w-6xl mx-auto h-full flex flex-col gap-4">
         {/* HEADER */}
         <div>
@@ -616,7 +614,7 @@ export default function MCQWizard() {
           )}
         </div>
 
-        {/* THANH CHỌN: Course – Lesson – LLO – AU – Mis – Số câu – Clinical vignette – Generate */}
+        {/* THANH CHỌN */}
         <div className="bg-white rounded-xl border shadow-sm p-4 flex flex-wrap gap-3 items-end text-xs">
           {/* Course */}
           <div className="flex flex-col">
@@ -680,8 +678,7 @@ export default function MCQWizard() {
               className="border rounded-md px-2 py-1 text-xs min-w-[200px]"
               value={selectedAU?.id ?? ""}
               onChange={(e) => {
-                const au =
-                  aus.find((x) => x.id === e.target.value) || null;
+                const au = aus.find((x) => x.id === e.target.value) || null;
                 if (au) chooseAU(au);
               }}
               disabled={!selectedLloId}
@@ -704,9 +701,7 @@ export default function MCQWizard() {
               max={10}
               className="border rounded-md px-2 py-1 text-xs w-20"
               value={questionCount}
-              onChange={(e) =>
-                setQuestionCount(Number(e.target.value) || 0)
-              }
+              onChange={(e) => setQuestionCount(Number(e.target.value) || 0)}
             />
           </div>
 
@@ -785,8 +780,8 @@ export default function MCQWizard() {
               <span>Các câu MCQ sinh ra</span>
               {mcqs.length > 0 && (
                 <span className="text-xs text-gray-500">
-                  Đã sinh {mcqs.length} câu – chỉnh sửa từng câu, chạy phân
-                  tích và bấm Lưu ở từng card.
+                  Đã sinh {mcqs.length} câu – chỉnh sửa từng câu, chạy phân tích
+                  và bấm Lưu ở từng card.
                 </span>
               )}
             </div>
@@ -794,11 +789,10 @@ export default function MCQWizard() {
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {(!selectedAU || mcqs.length === 0) && (
                 <div className="text-sm text-gray-500">
-                  • Chọn đầy đủ học phần – bài học – LLO – AU – Mis.{" "}
-                  <br />
+                  • Chọn đầy đủ học phần – bài học – LLO – AU – Mis. <br />
                   • Chọn số câu muốn sinh (3–5 gợi ý). <br />
-                  • Tick “Tình huống lâm sàng” nếu muốn dạng clinical
-                  vignette. <br />
+                  • Tick “Tình huống lâm sàng” nếu muốn dạng clinical vignette.{" "}
+                  <br />
                   • Bấm <b>Generate MCQ (GPT)</b> để xem kết quả ở đây.
                 </div>
               )}
@@ -816,9 +810,7 @@ export default function MCQWizard() {
                     className="border rounded-xl p-4 bg-slate-50 space-y-4"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="font-semibold text-sm">
-                        MCQ #{idx + 1}
-                      </div>
+                      <div className="font-semibold text-sm">MCQ #{idx + 1}</div>
                       <button
                         onClick={() => saveOneMCQ(idx)}
                         disabled={saving}
@@ -865,9 +857,7 @@ export default function MCQWizard() {
 
                     {/* DISTRACTORS */}
                     <div>
-                      <h3 className="font-semibold text-xs mb-2">
-                        Distractors
-                      </h3>
+                      <h3 className="font-semibold text-xs mb-2">Distractors</h3>
                       {mcq.distractors.map((d, di) => (
                         <div key={di} className="mb-3">
                           <div className="flex justify-between items-center">
@@ -896,9 +886,7 @@ export default function MCQWizard() {
 
                     {/* EXPLANATION */}
                     <div>
-                      <h3 className="font-semibold text-xs mb-1">
-                        Explanation
-                      </h3>
+                      <h3 className="font-semibold text-xs mb-1">Explanation</h3>
                       <textarea
                         className="w-full border rounded-lg px-2 py-1 text-xs"
                         rows={3}
@@ -931,7 +919,7 @@ export default function MCQWizard() {
                           : "Educational Fit (Bloom–bậc–LLO)"}
                       </button>
 
-                      {/* chừa slot cho nút phân tích thứ 3 sau này (vd. ShapleyDistractor) */}
+                      {/* chừa slot cho nút phân tích thứ 3 sau này */}
                     </div>
 
                     {/* KẾT QUẢ NBME */}
@@ -944,13 +932,9 @@ export default function MCQWizard() {
                       {nbme && (
                         <>
                           <div>
-                            <span className="font-semibold">
-                              Hard rules:{" "}
-                            </span>
+                            <span className="font-semibold">Hard rules: </span>
                             {nbme.hard_rules.passed ? (
-                              <span className="text-emerald-600">
-                                PASSED
-                              </span>
+                              <span className="text-emerald-600">PASSED</span>
                             ) : (
                               <span className="text-red-600">FAILED</span>
                             )}
@@ -990,9 +974,7 @@ export default function MCQWizard() {
                               ))}
                           </div>
                           <div>
-                            <div className="font-semibold">
-                              Gợi ý chỉnh sửa:
-                            </div>
+                            <div className="font-semibold">Gợi ý chỉnh sửa:</div>
                             <pre className="whitespace-pre-wrap">
                               {nbme.rubric.suggestions}
                             </pre>
@@ -1049,23 +1031,17 @@ export default function MCQWizard() {
                           </div>
 
                           <div>
-                            <div className="font-semibold">
-                              LLO coverage:
-                            </div>
+                            <div className="font-semibold">LLO coverage:</div>
                             <div className="max-h-32 overflow-y-auto space-y-1">
                               {edu.llo_coverage.map((c, i) => (
                                 <div
                                   key={i}
                                   className="border rounded-md px-2 py-1 bg-slate-50"
                                 >
-                                  <div className="font-semibold">
-                                    • {c.llo}
-                                  </div>
+                                  <div className="font-semibold">• {c.llo}</div>
                                   <div>
                                     Coverage:{" "}
-                                    <span className="italic">
-                                      {c.coverage}
-                                    </span>{" "}
+                                    <span className="italic">{c.coverage}</span>{" "}
                                     – {c.comment}
                                   </div>
                                 </div>
@@ -1074,9 +1050,7 @@ export default function MCQWizard() {
                           </div>
 
                           <div>
-                            <div className="font-semibold">
-                              Gợi ý chỉnh sửa:
-                            </div>
+                            <div className="font-semibold">Gợi ý chỉnh sửa:</div>
                             <ul className="list-disc list-inside">
                               {edu.recommendations.map((r, i) => (
                                 <li key={i}>{r}</li>
@@ -1091,6 +1065,25 @@ export default function MCQWizard() {
               })}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* FOOTER (giống style bạn đang dùng ở Step 3 trong hình) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 backdrop-blur">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+          <button
+            onClick={() => router.push("/wizard/misconcepts")}
+            className="px-4 py-2 rounded-lg text-sm font-medium border bg-white hover:bg-slate-50"
+          >
+            ← Quay lại Bước 3
+          </button>
+
+          <button
+            onClick={() => router.push("/wizard/simulate")}
+            className="px-5 py-2 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800"
+          >
+            Tiếp tục → Bước 5
+          </button>
         </div>
       </div>
     </div>
