@@ -1,6 +1,8 @@
+// app/wizard/mcq/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 /** COURSE / LESSON / LLO / AU TYPES */
@@ -34,7 +36,7 @@ type MCQListItem = {
 
 /** SIMULATION TYPES */
 type SimOption = {
-  label: string; // A, B, C, D
+  label: string; // A, B, C, D...
   text: string;
   is_correct: boolean;
 };
@@ -52,7 +54,7 @@ type AccuracyRow = {
 
 type ResponseRow = {
   persona: string;
-  chosen_option: string; // A, B, C, D
+  chosen_option: string; // A, B, C, D...
   chosen_text: string;
   is_correct: boolean;
 };
@@ -237,6 +239,8 @@ function computeShapleyFromSim(sim: SimResult): ShapleyRow[] {
 // COMPONENT BƯỚC 5 – MULTI MCQ
 // ===========================
 export default function MCQSimulateMultiPage() {
+  const router = useRouter();
+
   const [userId, setUserId] = useState<string | null>(null);
 
   const [courses, setCourses] = useState<Course[]>([]);
@@ -260,9 +264,7 @@ export default function MCQSimulateMultiPage() {
   const [initLoading, setInitLoading] = useState(false);
 
   // ---- Persona weights (tổng ~ 100%) ----
-  const [personaWeights, setPersonaWeights] = useState<PersonaWeight[]>([
-    { name: "Expert", value: 5 } as any, // tránh nhầm – fix bên dưới
-  ] as any); // TEMP init để TS không kêu – sẽ override ngay sau useEffect
+  const [personaWeights, setPersonaWeights] = useState<PersonaWeight[]>([]);
 
   // khởi tạo đúng giá trị 1 lần
   useEffect(() => {
@@ -476,7 +478,7 @@ export default function MCQSimulateMultiPage() {
     setMcqList((data as MCQListItem[]) || []);
   }
 
-  // ----- load chi tiết 1 MCQ (stem + options + metrics) để thêm card -----
+  // ----- load chi tiết 1 MCQ để thêm card -----
   async function loadMCQCard(item: MCQListItem) {
     if (cards.some((c) => c.id === item.id)) return;
 
@@ -515,8 +517,7 @@ export default function MCQSimulateMultiPage() {
       }[];
 
       const correctOpt =
-        options.find((o) => o.is_correct) ||
-        options.find((o) => o.label === "A");
+        options.find((o) => o.is_correct) || options.find((o) => o.label === "A");
 
       if (correctOpt) {
         correct_answer = correctOpt.text;
@@ -579,10 +580,7 @@ export default function MCQSimulateMultiPage() {
   }
 
   // ----- helpers chỉnh sửa card -----
-  function updateCard(
-    id: string,
-    updater: (card: MCQCardState) => MCQCardState
-  ) {
+  function updateCard(id: string, updater: (card: MCQCardState) => MCQCardState) {
     setCards((prev) => prev.map((c) => (c.id === id ? updater(c) : c)));
   }
 
@@ -602,7 +600,6 @@ export default function MCQSimulateMultiPage() {
       return;
     }
 
-    // chuẩn hóa về 1.0 để backend dễ dùng
     const persona_mix: Record<string, number> = {};
     personaWeights.forEach((p) => {
       const w = Math.max(p.weight || 0, 0);
@@ -625,7 +622,7 @@ export default function MCQSimulateMultiPage() {
         distractors,
         explanation,
         N: simN,
-        persona_mix, // 👈 gửi phân bố persona lên backend
+        persona_mix,
       }),
     });
 
@@ -691,14 +688,7 @@ export default function MCQSimulateMultiPage() {
     const card = cards.find((c) => c.id === id);
     if (!card || !userId) return;
 
-    const {
-      stem,
-      correct_answer,
-      explanation,
-      distractors,
-      simResult,
-      shapleyRows,
-    } = card;
+    const { stem, correct_answer, distractors, simResult, shapleyRows } = card;
 
     if (!stem.trim() || !correct_answer.trim() || distractors.length === 0) {
       alert("Vui lòng đảm bảo có stem, đáp án đúng và ít nhất một distractor.");
@@ -708,12 +698,9 @@ export default function MCQSimulateMultiPage() {
     updateCard(id, (c) => ({ ...c, saving: true }));
 
     try {
-      // 1) update mcq_items (chỉ stem, vì schema hiện không có correct_answer / explanation)
       const { error: updError } = await supabase
         .from("mcq_items")
-        .update({
-          stem,
-        })
+        .update({ stem })
         .eq("id", id);
 
       if (updError) {
@@ -723,7 +710,6 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
-      // 2) delete options cũ
       const { error: delError } = await supabase
         .from("mcq_options")
         .delete()
@@ -736,7 +722,6 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
-      // 3) insert options mới: A = correct_answer, B.. = distractors
       const labels = ["A", "B", "C", "D", "E", "F"];
       const rows = [
         {
@@ -755,9 +740,7 @@ export default function MCQSimulateMultiPage() {
         })),
       ];
 
-      const { error: insError } = await supabase
-        .from("mcq_options")
-        .insert(rows);
+      const { error: insError } = await supabase.from("mcq_options").insert(rows);
 
       if (insError) {
         console.error("Error inserting mcq_options:", insError.message);
@@ -766,17 +749,11 @@ export default function MCQSimulateMultiPage() {
         return;
       }
 
-      // 4) lưu metrics nếu có
       if (simResult && shapleyRows) {
-        const { error: metricError } = await supabase
-          .from("mcq_metrics")
-          .insert({
-            item_id: id,
-            payload: {
-              simResult,
-              shapleyRows,
-            },
-          });
+        const { error: metricError } = await supabase.from("mcq_metrics").insert({
+          item_id: id,
+          payload: { simResult, shapleyRows },
+        });
 
         if (metricError) {
           console.error("Error inserting mcq_metrics:", metricError.message);
@@ -796,7 +773,7 @@ export default function MCQSimulateMultiPage() {
 
   // ============== UI ==============
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+    <div className="max-w-7xl mx-auto px-6 py-8 space-y-6 pb-24">
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
@@ -804,15 +781,13 @@ export default function MCQSimulateMultiPage() {
             Bước 5 – Monte Carlo và Shapley cho nhiều MCQ
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Chọn Học phần, Bài học, LLO, AU rồi tick nhiều MCQ để phân tích
-            song song. Mỗi câu được mô phỏng bởi nhiều nhóm người học
-            (persona), sau đó tính Shapley để đánh giá sức mạnh distractor.
+            Chọn Học phần, Bài học, LLO, AU rồi tick nhiều MCQ để phân tích song
+            song. Mỗi câu được mô phỏng bởi nhiều nhóm người học (persona), sau
+            đó tính Shapley để đánh giá sức mạnh distractor.
           </p>
         </div>
         {initLoading && (
-          <div className="text-xs text-slate-500">
-            Đang tải danh sách Học phần...
-          </div>
+          <div className="text-xs text-slate-500">Đang tải danh sách Học phần...</div>
         )}
       </div>
 
@@ -947,19 +922,15 @@ export default function MCQSimulateMultiPage() {
               Danh sách MCQ trong Assessment Unit đã chọn
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Tick các câu MCQ bạn muốn phân tích. Mỗi câu sẽ xuất hiện ở một
-              card riêng bên dưới.
+              Tick các câu MCQ bạn muốn phân tích. Mỗi câu sẽ xuất hiện ở một card
+              riêng bên dưới.
             </p>
           </div>
           <div className="text-[11px] text-slate-500">
             Tổng MCQ:{" "}
-            <span className="font-semibold text-slate-800">
-              {mcqList.length}
-            </span>{" "}
+            <span className="font-semibold text-slate-800">{mcqList.length}</span>{" "}
             – Đang chọn:{" "}
-            <span className="font-semibold text-indigo-700">
-              {totalSelected}
-            </span>
+            <span className="font-semibold text-indigo-700">{totalSelected}</span>
           </div>
         </div>
 
@@ -1007,8 +978,8 @@ export default function MCQSimulateMultiPage() {
               Phân bố nhóm người học (persona) trong mô phỏng
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Thiết lập % Expert / Proficient / Average / Novice / Weak /
-              Guesser. Các % này dùng chung cho tất cả câu MCQ ở bước này.
+              Thiết lập % Expert / Proficient / Average / Novice / Weak / Guesser.
+              Các % này dùng chung cho tất cả câu MCQ ở bước này.
             </p>
           </div>
           <div
@@ -1042,10 +1013,7 @@ export default function MCQSimulateMultiPage() {
                         className="w-16 border rounded-md px-2 py-1 text-xs text-right outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
                         value={p.weight}
                         onChange={(e) =>
-                          updatePersonaWeight(
-                            p.name,
-                            Number(e.target.value) || 0
-                          )
+                          updatePersonaWeight(p.name, Number(e.target.value) || 0)
                         }
                       />
                       <span>%</span>
@@ -1058,8 +1026,8 @@ export default function MCQSimulateMultiPage() {
         </div>
 
         <p className="text-[11px] text-slate-500">
-          Ví dụ: lớp nhiều sinh viên trung bình/yếu có thể đặt Average 40%,
-          Novice 30%, Weak 15%, Expert 5%, Proficient 5%, Guesser 5%.
+          Ví dụ: lớp nhiều sinh viên trung bình/yếu có thể đặt Average 40%, Novice
+          30%, Weak 15%, Expert 5%, Proficient 5%, Guesser 5%.
         </p>
       </div>
 
@@ -1082,8 +1050,8 @@ export default function MCQSimulateMultiPage() {
                       MCQ: {card.id.slice(0, 8)}…
                     </div>
                     <p className="text-[11px] text-slate-500 max-w-xl">
-                      Chỉnh sửa stem, đáp án, distractor; sau đó chạy mô phỏng
-                      Monte Carlo và Shapley cho riêng câu này.
+                      Chỉnh sửa stem, đáp án, distractor; sau đó chạy mô phỏng Monte
+                      Carlo và Shapley cho riêng câu này.
                     </p>
                   </div>
 
@@ -1126,9 +1094,7 @@ export default function MCQSimulateMultiPage() {
                       disabled={card.saving}
                       className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50"
                     >
-                      {card.saving
-                        ? "Đang lưu MCQ..."
-                        : "Lưu MCQ và phân tích"}
+                      {card.saving ? "Đang lưu MCQ..." : "Lưu MCQ và phân tích"}
                     </button>
                   </div>
                 </div>
@@ -1138,9 +1104,7 @@ export default function MCQSimulateMultiPage() {
                   {/* Stem + explanation */}
                   <div className="space-y-3">
                     <div>
-                      <div className="font-semibold text-slate-800 mb-1">
-                        Stem
-                      </div>
+                      <div className="font-semibold text-slate-800 mb-1">Stem</div>
                       <textarea
                         className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
                         rows={4}
@@ -1196,12 +1160,8 @@ export default function MCQSimulateMultiPage() {
                       </div>
                       <div className="space-y-2">
                         {card.distractors.map((d, idx) => {
-                          const label = String.fromCharCode(
-                            "B".charCodeAt(0) + idx
-                          );
-                          const shap = card.shapleyRows?.find(
-                            (r) => r.label === label
-                          );
+                          const label = String.fromCharCode("B".charCodeAt(0) + idx);
+                          const shap = card.shapleyRows?.find((r) => r.label === label);
                           const isWeak = shap && shap.share_pct < 10;
 
                           return (
@@ -1232,12 +1192,11 @@ export default function MCQSimulateMultiPage() {
                                 {shap && (
                                   <div className="text-[10px] text-slate-600">
                                     Shapley:{" "}
-                                      <span className="font-semibold">
+                                    <span className="font-semibold">
                                       {shap.share_pct.toFixed(1)}%
                                     </span>{" "}
-                                    – Wrong:{" "}
-                                    {shap.wrong_pct.toFixed(1)}% – Novice hoặc
-                                    Weak: {shap.novice_pct.toFixed(1)}%
+                                    – Wrong: {shap.wrong_pct.toFixed(1)}% – Novice
+                                    hoặc Weak: {shap.novice_pct.toFixed(1)}%
                                   </div>
                                 )}
                               </div>
@@ -1247,9 +1206,7 @@ export default function MCQSimulateMultiPage() {
                                 disabled={card.refineIndex === idx}
                                 className="text-[11px] text-brand-700 hover:underline ml-1"
                               >
-                                {card.refineIndex === idx
-                                  ? "Refining..."
-                                  : "Refine"}
+                                {card.refineIndex === idx ? "Refining..." : "Refine"}
                               </button>
                             </div>
                           );
@@ -1269,29 +1226,19 @@ export default function MCQSimulateMultiPage() {
                       <table className="w-full text-xs border">
                         <thead>
                           <tr className="bg-slate-100">
-                            <th className="border px-2 py-1 text-left">
-                              Persona
-                            </th>
-                            <th className="border px-2 py-1 text-right">
-                              % đúng
-                            </th>
-                            <th className="border px-2 py-1 text-right">
-                              N mô phỏng
-                            </th>
+                            <th className="border px-2 py-1 text-left">Persona</th>
+                            <th className="border px-2 py-1 text-right">% đúng</th>
+                            <th className="border px-2 py-1 text-right">N mô phỏng</th>
                           </tr>
                         </thead>
                         <tbody>
                           {sim.accuracy_summary.map((r) => (
                             <tr key={r.persona}>
-                              <td className="border px-2 py-1">
-                                {r.persona}
-                              </td>
+                              <td className="border px-2 py-1">{r.persona}</td>
                               <td className="border px-2 py-1 text-right">
                                 {(r.accuracy * 100).toFixed(1)}%
                               </td>
-                              <td className="border px-2 py-1 text-right">
-                                {r.total}
-                              </td>
+                              <td className="border px-2 py-1 text-right">{r.total}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1306,19 +1253,12 @@ export default function MCQSimulateMultiPage() {
                         <table className="min-w-full text-xs border">
                           <thead>
                             <tr className="bg-slate-100">
-                              <th className="border px-2 py-1 text-left">
-                                Persona
-                              </th>
+                              <th className="border px-2 py-1 text-left">Persona</th>
                               {sim.options.map((o) => (
-                                <th
-                                  key={o.label}
-                                  className="border px-2 py-1 text-right"
-                                >
+                                <th key={o.label} className="border px-2 py-1 text-right">
                                   {o.label}
                                   {o.is_correct && (
-                                    <span className="text-emerald-700 ml-1">
-                                      (đ)
-                                    </span>
+                                    <span className="text-emerald-700 ml-1">(đ)</span>
                                   )}
                                 </th>
                               ))}
@@ -1327,18 +1267,13 @@ export default function MCQSimulateMultiPage() {
                           <tbody>
                             {sim.personas.map((p) => (
                               <tr key={p.name}>
-                                <td className="border px-2 py-1">
-                                  {p.name}
-                                </td>
+                                <td className="border px-2 py-1">{p.name}</td>
                                 {sim.options.map((o) => (
                                   <td
                                     key={o.label}
                                     className="border px-2 py-1 text-right"
                                   >
-                                    {((p.probs[o.label] ?? 0) * 100).toFixed(
-                                      1
-                                    )}
-                                    %
+                                    {((p.probs[o.label] ?? 0) * 100).toFixed(1)}%
                                   </td>
                                 ))}
                               </tr>
@@ -1360,21 +1295,11 @@ export default function MCQSimulateMultiPage() {
                       <table className="min-w-full text-xs border">
                         <thead>
                           <tr className="bg-slate-100">
-                            <th className="border px-2 py-1 text-left">
-                              Distractor
-                            </th>
-                            <th className="border px-2 py-1 text-right">
-                              Shapley
-                            </th>
-                            <th className="border px-2 py-1 text-right">
-                              Strength (%)
-                            </th>
-                            <th className="border px-2 py-1 text-right">
-                              % tất cả lượt chọn
-                            </th>
-                            <th className="border px-2 py-1 text-right">
-                              % Novice + Weak
-                            </th>
+                            <th className="border px-2 py-1 text-left">Distractor</th>
+                            <th className="border px-2 py-1 text-right">Shapley</th>
+                            <th className="border px-2 py-1 text-right">Strength (%)</th>
+                            <th className="border px-2 py-1 text-right">% tất cả lượt chọn</th>
+                            <th className="border px-2 py-1 text-right">% Novice + Weak</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1419,9 +1344,7 @@ export default function MCQSimulateMultiPage() {
                             : "bg-slate-50 border-slate-200"
                         }`}
                       >
-                        <div className="font-semibold mb-1">
-                          {r.label} – Khuyến nghị:
-                        </div>
+                        <div className="font-semibold mb-1">{r.label} – Khuyến nghị:</div>
                         <div className="text-gray-800">{r.recommendation}</div>
                       </div>
                     ))}
@@ -1432,6 +1355,35 @@ export default function MCQSimulateMultiPage() {
           })}
         </div>
       )}
+
+      {/* ✅ FOOTER: pill style đồng bộ Bước 1 */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 backdrop-blur">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => router.push("/wizard/mcq")}
+            className={
+              "px-3 py-1.5 rounded-full border transition text-xs font-medium " +
+              "border-slate-300 bg-white text-slate-700 " +
+              "hover:border-brand-400 hover:text-brand-700"
+            }
+          >
+            ← Quay lại Bước 4
+          </button>
+
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard")}
+            className={
+              "px-3 py-1.5 rounded-full border transition text-xs font-medium " +
+              "border-slate-300 bg-white text-slate-700 " +
+              "hover:border-brand-400 hover:text-brand-700"
+            }
+          >
+            Quay lại Dashboard →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
