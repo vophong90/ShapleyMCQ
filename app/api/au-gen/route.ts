@@ -8,6 +8,12 @@ function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function truncateText(text: string, maxChars: number) {
+  if (!text) return "";
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars) + "\n\n[...TRUNCATED...]";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get("content-type") || "";
@@ -20,7 +26,10 @@ export async function POST(req: NextRequest) {
     let lesson_title = "";
     let au_count_raw = "12"; // default
 
-    // 1) Lấy dữ liệu từ FormData (frontend đang dùng FormData) hoặc JSON
+    // ✅ NEW: texts extracted from user files
+    let materialsText = "";
+    let unsupported: { name: string; reason: string }[] = [];
+
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
 
@@ -32,7 +41,58 @@ export async function POST(req: NextRequest) {
       lesson_title = (formData.get("lesson_title") || "").toString();
       au_count_raw = (formData.get("au_count") || "12").toString();
 
-      // Lưu ý: hiện tại **chưa** parse nội dung file phía backend
+      // ✅ NEW: lấy files đúng key "files"
+      const files = formData.getAll("files").filter((x) => x instanceof File) as File[];
+
+      // ✅ NEW: hạn chế size để tránh 413/memory blow
+      // (tùy bạn chỉnh)
+      const MAX_FILES = 8;
+      const MAX_EACH_BYTES = 6 * 1024 * 1024; // 6MB/file
+      const MAX_TOTAL_BYTES = 15 * 1024 * 1024; // 15MB tổng
+
+      let total = 0;
+      const picked: File[] = [];
+
+      for (const f of files.slice(0, MAX_FILES)) {
+        total += f.size;
+        if (f.size > MAX_EACH_BYTES) {
+          unsupported.push({ name: f.name, reason: "File quá lớn (vượt 6MB/file)." });
+          continue;
+        }
+        if (total > MAX_TOTAL_BYTES) {
+          unsupported.push({ name: f.name, reason: "Tổng dung lượng file vượt giới hạn (15MB)." });
+          break;
+        }
+        picked.push(f);
+      }
+
+      // ✅ NEW: gọi /api/file-extract để trích xuất text
+      if (picked.length > 0) {
+        const fd2 = new FormData();
+        for (const f of picked) fd2.append("files", f);
+
+        const origin = new URL(req.url).origin;
+        const extractRes = await fetch(`${origin}/api/file-extract`, {
+          method: "POST",
+          body: fd2,
+        });
+
+        const extractData = await extractRes.json().catch(() => ({}));
+
+        if (extractRes.ok && extractData?.text) {
+          materialsText = extractData.text.toString();
+          if (Array.isArray(extractData.unsupported)) {
+            unsupported = [...unsupported, ...extractData.unsupported];
+          }
+        } else {
+          // Không làm fail cả request; chỉ cảnh báo
+          console.error("file-extract error:", extractData);
+          unsupported.push({
+            name: "file-extract",
+            reason: extractData?.error || "Không trích xuất được nội dung từ file.",
+          });
+        }
+      }
     } else {
       const body = (await req.json().catch(() => ({}))) as any;
       llos_text = (body.llos_text || "").toString();
@@ -42,14 +102,20 @@ export async function POST(req: NextRequest) {
       course_title = (body.course_title || "").toString();
       lesson_title = (body.lesson_title || "").toString();
       au_count_raw = (body.au_count ?? "12").toString();
+
+      // JSON mode: nếu muốn hỗ trợ materialsText thì thêm body.materialsText
+      materialsText = (body.materialsText || "").toString();
     }
 
     if (!llos_text.trim()) {
       return NextResponse.json({ error: "Thiếu LLOs để tạo AU" }, { status: 400 });
     }
 
-    // 2) Parse & giới hạn số lượng AU
-    const auCount = clampInt(parseInt(au_count_raw, 10), 1, 30); // bạn có thể đổi max 50 nếu muốn
+    const auCount = clampInt(parseInt(au_count_raw, 10), 1, 30);
+
+    // ✅ NEW: truncate materials để tránh prompt quá dài
+    // Bạn có thể chỉnh 20k/40k tùy model/context window
+    const materialsTextTrunc = truncateText(materialsText, 25000);
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -59,10 +125,6 @@ export async function POST(req: NextRequest) {
 
     const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
 
-    // ✅ Prompt đã được làm “NHẤT QUÁN SCHEMA”
-    // - Không yêu cầu thêm field ngoài 3 field bạn đang dùng ở UI
-    // - Ép sinh đúng N AU
-    // - Ép không trôi chuyên ngành
     const prompt = `
 Bạn là chuyên gia thiết kế đánh giá trong giáo dục y khoa.
 
@@ -71,6 +133,9 @@ Tạo đúng ${auCount} Assessment Units (AU) — “đơn vị kiến thức nh
 
 INPUT (LLOs)
 ${llos_text}
+
+TÀI LIỆU NGƯỜI DÙNG TẢI LÊN (CHỈ DÙNG LÀM BẰNG CHỨNG/HỖ TRỢ, KHÔNG BỊA)
+${materialsTextTrunc ? materialsTextTrunc : "[Không có hoặc không trích xuất được nội dung file]"}
 
 NGỮ CẢNH
 - Chuyên ngành (specialty): ${specialty_name || "không rõ"}
@@ -138,7 +203,7 @@ Bạn PHẢI trả lời CHỈ bằng JSON với cấu trúc CHÍNH XÁC sau (kh
     if (!openaiRes.ok) {
       console.error("OpenAI error tại /api/au-gen:", data);
       return NextResponse.json(
-        { error: "Lỗi khi gọi GPT", detail: JSON.stringify(data, null, 2) },
+        { error: "Lỗi khi gọi GPT", detail: JSON.stringify(data, null, 2), unsupported },
         { status: 500 }
       );
     }
@@ -146,7 +211,10 @@ Bạn PHẢI trả lời CHỈ bằng JSON với cấu trúc CHÍNH XÁC sau (kh
     const content = data?.choices?.[0]?.message?.content;
     if (!content || typeof content !== "string") {
       console.error("Không có message.content hợp lệ (AU-gen):", data);
-      return NextResponse.json({ error: "Không nhận được content hợp lệ từ GPT" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Không nhận được content hợp lệ từ GPT", unsupported },
+        { status: 500 }
+      );
     }
 
     let parsed: any;
@@ -154,18 +222,20 @@ Bạn PHẢI trả lời CHỈ bằng JSON với cấu trúc CHÍNH XÁC sau (kh
       parsed = JSON.parse(content);
     } catch (e) {
       console.error("JSON parse error ở /api/au-gen:", e, "raw:", content);
-      return NextResponse.json({ error: "GPT trả về JSON không hợp lệ", raw: content }, { status: 500 });
+      return NextResponse.json(
+        { error: "GPT trả về JSON không hợp lệ", raw: content, unsupported },
+        { status: 500 }
+      );
     }
 
     if (!parsed?.aus || !Array.isArray(parsed.aus)) {
       console.error("JSON không có trường 'aus' đúng định dạng:", parsed);
       return NextResponse.json(
-        { error: "JSON không có trường 'aus' đúng định dạng", raw: parsed },
+        { error: "JSON không có trường 'aus' đúng định dạng", raw: parsed, unsupported },
         { status: 500 }
       );
     }
 
-    // Chuẩn hóa + ép số lượng đúng auCount
     const aus = parsed.aus
       .map((x: any) => ({
         core_statement: (x.core_statement ?? x.text ?? "").toString(),
@@ -175,19 +245,19 @@ Bạn PHẢI trả lời CHỈ bằng JSON với cấu trúc CHÍNH XÁC sau (kh
       .filter((x: any) => x.core_statement && x.core_statement.trim().length > 0)
       .slice(0, auCount);
 
-    // Nếu GPT vẫn trả thiếu, báo rõ (để bạn debug nhanh)
     if (aus.length < auCount) {
       return NextResponse.json(
         {
           error: `GPT trả về ${aus.length}/${auCount} AU (thiếu).`,
           raw: parsed,
           aus,
+          unsupported,
         },
         { status: 502 }
       );
     }
 
-    return NextResponse.json({ aus }, { status: 200 });
+    return NextResponse.json({ aus, unsupported }, { status: 200 });
   } catch (err: any) {
     console.error("Lỗi server /api/au-gen:", err);
     return NextResponse.json(
