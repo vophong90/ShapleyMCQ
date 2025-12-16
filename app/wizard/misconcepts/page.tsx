@@ -557,20 +557,8 @@ export default function MisconceptWizard() {
     router.push(STEP2_PATH);
   }
 
+  // ✅ Không có điều kiện: bấm là qua thẳng
   function handleContinueStep4() {
-    // giữ logic “an toàn” tối thiểu giống kiểu Step 2: phải có dữ liệu chính
-    if (!selectedCourse || !selectedLesson || !selectedLlo) {
-      alert("Vui lòng chọn đầy đủ Học phần, Bài học, LLO trước khi tiếp tục.");
-      return;
-    }
-    if (selectedAuIds.size === 0) {
-      alert("Vui lòng tick ít nhất 1 AU trước khi tiếp tục.");
-      return;
-    }
-    if (totalApproved === 0) {
-      alert("Chưa có Mis nào được duyệt. Vui lòng duyệt (tick) ít nhất 1 Mis hoặc lưu Mis trước khi tiếp tục.");
-      return;
-    }
     router.push(STEP4_PATH);
   }
 
@@ -926,7 +914,7 @@ export default function MisconceptWizard() {
           </div>
         </div>
 
-        {/* Sub-card 4.2: Mis mới sinh từ GPT (source = "gpt") */}
+        {/* Sub-card 4.2: Mis mới sinh từ GPT */}
         <div className="border rounded-2xl p-4 bg-indigo-50/40 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -936,8 +924,7 @@ export default function MisconceptWizard() {
               <p className="text-[11px] text-slate-500 mt-0.5">
                 Đây là các Mis GPT vừa sinh (source = &quot;gpt&quot;). Sau khi
                 chỉnh sửa, tick “Duyệt” và bấm “Lưu Misconceptions”, các Mis
-                được duyệt sẽ được ghi xuống Supabase và lần load lại sau sẽ
-                nằm ở card “Misconceptions đã lưu trong Supabase”.
+                được duyệt sẽ được ghi xuống Supabase.
               </p>
             </div>
             <div className="text-[11px] text-slate-500 text-right">
@@ -1067,26 +1054,24 @@ export default function MisconceptWizard() {
         </div>
       </div>
 
-      {/* ✅ Footer nav (Back Step 2 / Continue Step 4) */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/85 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
+      {/* ✅ Footer nav pill giống Step 1 */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur border-t border-slate-200">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={handleBackStep2}
-            className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:border-brand-400 hover:text-brand-700"
+            className="px-3 py-1.5 rounded-full border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:border-brand-400 hover:text-brand-700 transition"
           >
             ← Quay lại Bước 2
           </button>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleContinueStep4}
-              className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
-            >
-              Tiếp tục → Bước 4
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleContinueStep4}
+            className="px-3.5 py-1.5 rounded-full border border-slate-900 bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition"
+          >
+            Tiếp tục → Bước 4
+          </button>
         </div>
       </div>
     </div>
