@@ -471,20 +471,37 @@ export default function AUPage() {
       }
 
       const res = await fetch("/api/au-gen", {
-        method: "POST",
-        body: formData,
-      });
+  method: "POST",
+  body: formData,
+});
 
-      const data = await res.json().catch(() => ({}));
+// 👇 đọc raw text trước
+const rawText = await res.text();
 
-      if (!res.ok) {
-        console.error("AU-gen error:", data);
-        setError(data?.error || "Lỗi sinh AU từ GPT. Vui lòng thử lại.");
-        setGenLoading(false);
-        return;
-      }
+let data: any = null;
+try {
+  data = rawText ? JSON.parse(rawText) : null;
+} catch {
+  data = null;
+}
 
-      const rawAus = Array.isArray(data.aus) ? data.aus : [];
+if (!res.ok) {
+  console.error("AU-gen FAILED", {
+    status: res.status,
+    statusText: res.statusText,
+    contentType: res.headers.get("content-type"),
+    rawText,   // ⬅⬅⬅ CỰC KỲ QUAN TRỌNG
+    parsed: data,
+  });
+
+  setError(
+    data?.error ||
+      data?.detail ||
+      `Lỗi sinh AU (HTTP ${res.status}). Xem console để biết chi tiết.`
+  );
+  setGenLoading(false);
+  return;
+}
 
       const existingKeys = new Set<string>();
       savedAus.forEach((a) => {
