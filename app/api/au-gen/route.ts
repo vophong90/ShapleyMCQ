@@ -349,11 +349,11 @@ export async function POST(req: NextRequest) {
         const fd2 = new FormData();
         for (const f of files) fd2.append("files", f);
 
-        const origin = new URL(req.url).origin;
-        const extractRes = await fetch(`${origin}/api/file-extract`, {
-          method: "POST",
-          body: fd2,
-        });
+        const baseUrl = getBaseUrl(req);
+         const extractRes = await fetch(`${baseUrl}/api/file-extract`, {
+            method: "POST",
+            body: fd2,
+         });
 
         const extractData = await extractRes.json().catch(() => ({}));
 
