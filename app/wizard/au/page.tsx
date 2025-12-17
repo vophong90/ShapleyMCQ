@@ -502,7 +502,7 @@ if (!res.ok) {
   setGenLoading(false);
   return;
 }
-
+const rawAus = Array.isArray(data.aus) ? data.aus : [];
       const existingKeys = new Set<string>();
       savedAus.forEach((a) => {
         existingKeys.add(normalizeCore(a.core_statement || ""));
