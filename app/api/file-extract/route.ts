@@ -31,56 +31,100 @@ async function extractDocx(buffer: Buffer): Promise<string> {
   return result.value || "";
 }
 
-// PPTX
+// PPTX (cleaner): chỉ lấy text runs (a:t) + giữ thứ tự slide
 async function extractPptx(buffer: Buffer): Promise<string> {
   const zip = await JSZip.loadAsync(buffer);
+
+  // preserveOrder giúp giữ thứ tự xuất hiện trong XML => text ra "đọc được" hơn
   const xmlParser = new XMLParser({
-    ignoreAttributes: false,
+    ignoreAttributes: true,
     trimValues: true,
+    preserveOrder: true,
   });
 
-  let allText: string[] = [];
+  let allSlidesText: string[] = [];
 
-  // Các slide nằm trong ppt/slides/slideX.xml
-  const slideFiles = Object.keys(zip.files).filter((name) =>
-    /^ppt\/slides\/slide\d+\.xml$/.test(name)
-  );
+  // ✅ Sort slide theo số thứ tự (slide1, slide2, ...)
+  const slideFiles = Object.keys(zip.files)
+    .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+    .sort((a, b) => {
+      const na = parseInt(a.match(/slide(\d+)\.xml$/)?.[1] || "0", 10);
+      const nb = parseInt(b.match(/slide(\d+)\.xml$/)?.[1] || "0", 10);
+      return na - nb;
+    });
 
-  for (const slideName of slideFiles) {
-    const file = zip.file(slideName);
-    if (!file) continue;
+  // Walk tree preserveOrder: node dạng [{ "p:sld": [...] }, { "a:t": [{ "#text": "..." }] }, ...]
+  function walkPreserveOrder(node: any, out: string[]) {
+    if (node == null) return;
 
-    const xmlString = await file.async("string");
-    const json = xmlParser.parse(xmlString);
-
-    // Duyệt json để gom tất cả string leaves
-    const texts: string[] = [];
-
-    function collectStrings(node: any) {
-      if (node == null) return;
-      if (typeof node === "string") {
-        const trimmed = node.trim();
-        if (trimmed) texts.push(trimmed);
-        return;
-      }
-      if (Array.isArray(node)) {
-        for (const item of node) collectStrings(item);
-        return;
-      }
-      if (typeof node === "object") {
-        for (const key of Object.keys(node)) {
-          collectStrings(node[key]);
-        }
-      }
+    if (Array.isArray(node)) {
+      for (const it of node) walkPreserveOrder(it, out);
+      return;
     }
 
-    collectStrings(json);
-    if (texts.length > 0) {
-      allText.push(texts.join(" "));
+    if (typeof node !== "object") return;
+
+    for (const key of Object.keys(node)) {
+      const val = node[key];
+
+      // ✅ Lấy đúng text run
+      if (key === "a:t") {
+        // val thường là mảng, mỗi phần là { "#text": "..." }
+        if (Array.isArray(val)) {
+          for (const v of val) {
+            const t = (v?.["#text"] ?? "").toString().trim();
+            if (t) out.push(t);
+          }
+        } else {
+          const t = (val?.["#text"] ?? "").toString().trim();
+          if (t) out.push(t);
+        }
+        continue;
+      }
+
+      // xuống dòng: a:br (line break)
+      if (key === "a:br") {
+        out.push("\n");
+        continue;
+      }
+
+      // đoạn mới: a:p (paragraph) -> sau khi duyệt xong, chèn newline
+      if (key === "a:p") {
+        // duyệt nội dung trong paragraph
+        const beforeLen = out.length;
+        walkPreserveOrder(val, out);
+        // nếu paragraph có text mới thì xuống dòng
+        if (out.length > beforeLen) out.push("\n");
+        continue;
+      }
+
+      walkPreserveOrder(val, out);
     }
   }
 
-  return allText.join("\n\n");
+  for (const slideName of slideFiles) {
+    const f = zip.file(slideName);
+    if (!f) continue;
+
+    const xmlString = await f.async("string");
+    const parsed = xmlParser.parse(xmlString);
+
+    const tokens: string[] = [];
+    walkPreserveOrder(parsed, tokens);
+
+    // cleanup spacing/newlines
+    const text = tokens
+      .join(" ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n[ \t]+/g, "\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    if (text) allSlidesText.push(text);
+  }
+
+  return allSlidesText.join("\n\n");
 }
 
 export async function POST(req: NextRequest) {
