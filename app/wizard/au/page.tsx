@@ -471,38 +471,38 @@ export default function AUPage() {
       }
 
       const res = await fetch("/api/au-gen", {
-  method: "POST",
-  body: formData,
-});
-
-// 👇 đọc raw text trước
-const rawText = await res.text();
-
-let data: any = null;
-try {
-  data = rawText ? JSON.parse(rawText) : null;
-} catch {
-  data = null;
-}
-
-if (!res.ok) {
-  console.error("AU-gen FAILED", {
-    status: res.status,
-    statusText: res.statusText,
-    contentType: res.headers.get("content-type"),
-    rawText,   // ⬅⬅⬅ CỰC KỲ QUAN TRỌNG
-    parsed: data,
-  });
-
-  setError(
-    data?.error ||
-      data?.detail ||
-      `Lỗi sinh AU (HTTP ${res.status}). Xem console để biết chi tiết.`
-  );
-  setGenLoading(false);
-  return;
-}
-const rawAus = Array.isArray(data.aus) ? data.aus : [];
+        method: "POST",
+        body: formData,
+      });
+      
+      // 👇 đọc raw text trước
+      const rawText = await res.text();
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
+      
+      if (!res.ok) {
+        console.error("AU-gen FAILED", {
+          status: res.status,
+          statusText: res.statusText,
+          contentType: res.headers.get("content-type"),
+          rawText,   // ⬅⬅⬅ CỰC KỲ QUAN TRỌNG
+          parsed: data,
+        });
+        
+        setError(
+          data?.error ||
+          data?.detail ||
+          `Lỗi sinh AU (HTTP ${res.status}). Xem console để biết chi tiết.`
+        );
+        setGenLoading(false);
+        return;
+      }
+      
+      const rawAus = Array.isArray(data.aus) ? data.aus : [];
       const existingKeys = new Set<string>();
       savedAus.forEach((a) => {
         existingKeys.add(normalizeCore(a.core_statement || ""));
