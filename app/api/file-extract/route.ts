@@ -6,45 +6,67 @@ import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-// Helper: đọc Buffer từ File (formData)
-async function fileToBuffer(file: File): Promise<Buffer> {
-  const arrayBuffer = await file.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+/* =========================================
+   Utils
+========================================= */
+
+function cleanTextBlock(text: string) {
+  return (text || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-// TXT
-async function extractTxt(file: File): Promise<string> {
-  const text = await file.text();
-  return text || "";
+function normalizeExt(name?: string, ext?: string) {
+  const e =
+    (ext || "").toLowerCase().trim() ||
+    (name?.split(".").pop() || "").toLowerCase().trim();
+  return e;
 }
 
-// PDF
+function base64ToBuffer(b64: string): Buffer {
+  // Cho phép data URL hoặc base64 thuần
+  const s = (b64 || "").trim();
+  if (!s) return Buffer.alloc(0);
+
+  const m = s.match(/^data:.*?;base64,(.+)$/);
+  const raw = m ? m[1] : s;
+  return Buffer.from(raw, "base64");
+}
+
+/* =========================================
+   Extractors (server-side, from Buffer)
+========================================= */
+
 async function extractPdf(buffer: Buffer): Promise<string> {
   const data = await pdfParse(buffer);
   return data.text || "";
 }
 
-// DOCX
 async function extractDocx(buffer: Buffer): Promise<string> {
   const result = await mammoth.extractRawText({ buffer });
   return result.value || "";
+}
+
+async function extractTxtFromBuffer(buffer: Buffer): Promise<string> {
+  return buffer.toString("utf8") || "";
 }
 
 // PPTX (cleaner): chỉ lấy text runs (a:t) + giữ thứ tự slide
 async function extractPptx(buffer: Buffer): Promise<string> {
   const zip = await JSZip.loadAsync(buffer);
 
-  // preserveOrder giúp giữ thứ tự xuất hiện trong XML => text ra "đọc được" hơn
   const xmlParser = new XMLParser({
     ignoreAttributes: true,
     trimValues: true,
     preserveOrder: true,
   });
 
-  let allSlidesText: string[] = [];
-
-  // ✅ Sort slide theo số thứ tự (slide1, slide2, ...)
   const slideFiles = Object.keys(zip.files)
     .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
     .sort((a, b) => {
@@ -53,23 +75,19 @@ async function extractPptx(buffer: Buffer): Promise<string> {
       return na - nb;
     });
 
-  // Walk tree preserveOrder: node dạng [{ "p:sld": [...] }, { "a:t": [{ "#text": "..." }] }, ...]
-  function walkPreserveOrder(node: any, out: string[]) {
+  function walk(node: any, out: string[]) {
     if (node == null) return;
 
     if (Array.isArray(node)) {
-      for (const it of node) walkPreserveOrder(it, out);
+      for (const it of node) walk(it, out);
       return;
     }
-
     if (typeof node !== "object") return;
 
     for (const key of Object.keys(node)) {
       const val = node[key];
 
-      // ✅ Lấy đúng text run
       if (key === "a:t") {
-        // val thường là mảng, mỗi phần là { "#text": "..." }
         if (Array.isArray(val)) {
           for (const v of val) {
             const t = (v?.["#text"] ?? "").toString().trim();
@@ -82,65 +100,60 @@ async function extractPptx(buffer: Buffer): Promise<string> {
         continue;
       }
 
-      // xuống dòng: a:br (line break)
       if (key === "a:br") {
         out.push("\n");
         continue;
       }
 
-      // đoạn mới: a:p (paragraph) -> sau khi duyệt xong, chèn newline
       if (key === "a:p") {
-        // duyệt nội dung trong paragraph
-        const beforeLen = out.length;
-        walkPreserveOrder(val, out);
-        // nếu paragraph có text mới thì xuống dòng
-        if (out.length > beforeLen) out.push("\n");
+        const before = out.length;
+        walk(val, out);
+        if (out.length > before) out.push("\n");
         continue;
       }
 
-      walkPreserveOrder(val, out);
+      walk(val, out);
     }
   }
+
+  const slidesText: string[] = [];
 
   for (const slideName of slideFiles) {
     const f = zip.file(slideName);
     if (!f) continue;
 
-    const xmlString = await f.async("string");
-    const parsed = xmlParser.parse(xmlString);
+    const xml = await f.async("string");
+    const parsed = xmlParser.parse(xml);
 
     const tokens: string[] = [];
-    walkPreserveOrder(parsed, tokens);
+    walk(parsed, tokens);
 
-    // cleanup spacing/newlines
-    const text = tokens
-      .join(" ")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n[ \t]+/g, "\n")
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-
-    if (text) allSlidesText.push(text);
+    const text = cleanTextBlock(tokens.join(" "));
+    if (text) slidesText.push(text);
   }
 
-  return allSlidesText.join("\n\n");
+  return slidesText.join("\n\n");
 }
+
+/* =========================================
+   API: POST JSON { files: [{name, ext, data_base64}] }
+   (No multipart to avoid 413)
+========================================= */
+
+type InFile = {
+  name: string;
+  ext?: string; // optional, will be derived from name if missing
+  data_base64: string; // base64 or data:url
+};
 
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData();
-    const files: File[] = [];
+    const body = (await req.json().catch(() => ({}))) as any;
+    const files: InFile[] = Array.isArray(body?.files) ? body.files : [];
 
-    for (const [, value] of formData.entries()) {
-      if (value instanceof File) {
-        files.push(value);
-      }
-    }
-
-    if (files.length === 0) {
+    if (!files.length) {
       return NextResponse.json(
-        { error: "Không tìm thấy file nào trong request." },
+        { error: "Thiếu files[]. Gửi JSON { files: [{name, ext?, data_base64}] }" },
         { status: 400 }
       );
     }
@@ -148,43 +161,60 @@ export async function POST(req: NextRequest) {
     const texts: string[] = [];
     const unsupported: { name: string; reason: string }[] = [];
 
-    for (const file of files) {
-      const name = file.name || "unknown";
-      const ext = name.split(".").pop()?.toLowerCase() || "";
+    for (const f of files) {
+      const name = (f?.name || "unknown").toString();
+      const ext = normalizeExt(name, f?.ext);
+      const b64 = (f?.data_base64 || "").toString();
+
+      if (!b64) {
+        unsupported.push({ name, reason: "Thiếu data_base64." });
+        continue;
+      }
+
+      let buf: Buffer;
+      try {
+        buf = base64ToBuffer(b64);
+      } catch {
+        unsupported.push({ name, reason: "data_base64 không hợp lệ." });
+        continue;
+      }
+
+      if (!buf || buf.length === 0) {
+        unsupported.push({ name, reason: "Nội dung rỗng hoặc decode base64 thất bại." });
+        continue;
+      }
 
       try {
+        let text = "";
+
         if (ext === "txt") {
-          const text = await extractTxt(file);
-          texts.push(`===== FILE: ${name} =====\n${text}`);
+          text = await extractTxtFromBuffer(buf);
         } else if (ext === "pdf") {
-          const buf = await fileToBuffer(file);
-          const text = await extractPdf(buf);
-          texts.push(`===== FILE: ${name} =====\n${text}`);
+          text = await extractPdf(buf);
         } else if (ext === "docx") {
-          const buf = await fileToBuffer(file);
-          const text = await extractDocx(buf);
-          texts.push(`===== FILE: ${name} =====\n${text}`);
+          text = await extractDocx(buf);
         } else if (ext === "pptx") {
-          const buf = await fileToBuffer(file);
-          const text = await extractPptx(buf);
-          texts.push(`===== FILE: ${name} =====\n${text}`);
+          text = await extractPptx(buf);
         } else {
           unsupported.push({
             name,
-            reason:
-              "Định dạng chưa hỗ trợ. Vui lòng dùng .pdf, .docx, .pptx hoặc .txt",
+            reason: "Định dạng chưa hỗ trợ. Dùng .pdf, .docx, .pptx hoặc .txt",
           });
+          continue;
+        }
+
+        text = cleanTextBlock(text);
+        if (text) texts.push(`===== FILE: ${name} =====\n${text}`);
+        else {
+          unsupported.push({ name, reason: "Trích xuất được nhưng không có text (có thể là file scan/ảnh)." });
         }
       } catch (e: any) {
         console.error(`Lỗi parse file ${name}:`, e);
-        unsupported.push({
-          name,
-          reason: "Lỗi khi trích xuất nội dung file.",
-        });
+        unsupported.push({ name, reason: "Lỗi khi trích xuất nội dung file." });
       }
     }
 
-    const combinedText = texts.join("\n\n\n");
+    const combinedText = cleanTextBlock(texts.join("\n\n\n"));
 
     if (!combinedText.trim()) {
       return NextResponse.json(
