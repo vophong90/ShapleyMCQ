@@ -5,6 +5,43 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /* =========================================
+   CORS helpers (FIX 403 preflight)
+========================================= */
+
+function buildCorsHeaders(req?: NextRequest) {
+  // Nếu bạn KHÔNG dùng cookies/credentials => '*' là OK
+  // Nếu có dùng credentials: cần đổi sang echo origin + Allow-Credentials
+  const origin = req?.headers.get("origin") || "*";
+
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+    // Nếu bạn bật credentials thì mở dòng này và bỏ '*' ở allow-origin:
+    // "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  } as Record<string, string>;
+}
+
+function jsonWithCors(req: NextRequest, body: any, init?: ResponseInit) {
+  const headers = new Headers(init?.headers || {});
+  const cors = buildCorsHeaders(req);
+  for (const [k, v] of Object.entries(cors)) headers.set(k, v);
+
+  return NextResponse.json(body, {
+    ...init,
+    headers,
+  });
+}
+
+// ✅ BẮT BUỘC có OPTIONS để browser preflight không bị 403
+export async function OPTIONS(req: NextRequest) {
+  const headers = new Headers(buildCorsHeaders(req));
+  return new NextResponse(null, { status: 204, headers });
+}
+
+/* =========================================
    Utils
 ========================================= */
 
@@ -79,7 +116,6 @@ function chunkText(
 
 /**
  * Retrieve đơn giản bằng scoring token overlap (không cần DB).
- * Lưu ý: độ “đúng chuyên ngành” dựa vào query (context + LLO).
  */
 function retrieveTopK(
   chunks: { id: string; content: string }[],
@@ -104,8 +140,11 @@ function retrieveTopK(
       if (t.includes(w)) score += 1;
     }
 
-    // bonus nhẹ nếu chunk có cấu trúc kiểu guideline/định nghĩa/quy trình/bước/tiêu chuẩn
-    if (/(định nghĩa|tiêu chuẩn|chẩn đoán|điều trị|phác đồ|quy trình|protocol|guideline|mục tiêu|kết cục|liều|chỉ định|chống chỉ định)/i.test(c.content)) {
+    if (
+      /(định nghĩa|tiêu chuẩn|chẩn đoán|điều trị|phác đồ|quy trình|protocol|guideline|mục tiêu|kết cục|liều|chỉ định|chống chỉ định)/i.test(
+        c.content
+      )
+    ) {
       score += 1;
     }
 
@@ -124,13 +163,6 @@ function retrieveTopK(
 const OPENAI_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-5.2-pro-2025-12-11";
 
-/**
- * Responses API + json_schema strict
- * - Dùng text.format (mới)
- * - Không dùng response_format (cũ) -> tránh 400
- * - Không set temperature theo yêu cầu
- * - Parse JSON từ output_text để ổn định
- */
 async function callOpenAIJsonSchema<T>(args: {
   model?: string;
   prompt: string;
@@ -340,7 +372,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!llos_text.trim()) {
-      return NextResponse.json({ error: "Thiếu LLOs để tạo AU" }, { status: 400 });
+      return jsonWithCors(req, { error: "Thiếu LLOs để tạo AU" }, { status: 400 });
     }
 
     const auCount = clampInt(parseInt(au_count_raw, 10), 1, 40);
@@ -419,7 +451,7 @@ Trả về JSON đúng schema.
       evidence: { chunk_id: string; quote: string };
     };
 
-    const gen = await callOpenAIJsonSchema<{ aus: CandidateAU[] }>({
+    const gen = await callOpenAIJsonSchema<{ aus: CandidateAU[] }>(/* keep */ {
       model: DEFAULT_MODEL,
       prompt: genPrompt,
       schemaName: "au_candidates",
@@ -439,7 +471,7 @@ Trả về JSON đúng schema.
     });
 
     /* ============================
-       STEP 2: VERIFY (lọc/sửa/đủ số)
+       STEP 2: VERIFY
     ============================ */
 
     const verifyPrompt = `
@@ -455,7 +487,6 @@ NGUYÊN TẮC (RẤT QUAN TRỌNG)
 - Nếu AU mơ hồ/không kiểm tra được => sửa cho testable hoặc loại.
 - Nếu AU gộp nhiều ý => tách hoặc viết lại thành 1 ý.
 - Nếu thiếu số lượng sau khi lọc => tạo thêm AU MỚI nhưng vẫn chỉ dựa trên chunks.
-- Không yêu cầu “đúng chuyên ngành” bằng suy đoán: hãy để chunks quyết định ngữ cảnh chuyên ngành.
 
 LLO
 ${llos_text}
@@ -558,7 +589,8 @@ Trả JSON theo schema aus[].
     finalAus = finalAus.slice(0, auCount);
 
     if (finalAus.length < auCount) {
-      return NextResponse.json(
+      return jsonWithCors(
+        req,
         {
           error: `Sau verify/repair vẫn thiếu AU: ${finalAus.length}/${auCount}. Có thể tài liệu upload không đủ hoặc trích xuất text kém.`,
           aus: finalAus,
@@ -568,11 +600,12 @@ Trả JSON theo schema aus[].
       );
     }
 
-    return NextResponse.json({ aus: finalAus, unsupported }, { status: 200 });
+    return jsonWithCors(req, { aus: finalAus, unsupported }, { status: 200 });
   } catch (err: any) {
     console.error("Lỗi server /api/au-gen:", err);
 
-    return NextResponse.json(
+    return jsonWithCors(
+      req,
       {
         error: "Lỗi server khi sinh AU (GPT-5.2-pro RAG)",
         detail: String(err?.message || err),
