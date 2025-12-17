@@ -35,6 +35,16 @@ function jsonWithCors(req: NextRequest, body: any, init?: ResponseInit) {
   });
 }
 
+function getBaseUrl(req: NextRequest) {
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const host =
+    req.headers.get("x-forwarded-host") ??
+    req.headers.get("host") ??
+    new URL(req.url).host;
+
+  return `${proto}://${host}`;
+}
+
 // ✅ BẮT BUỘC có OPTIONS để browser preflight không bị 403
 export async function OPTIONS(req: NextRequest) {
   const headers = new Headers(buildCorsHeaders(req));
