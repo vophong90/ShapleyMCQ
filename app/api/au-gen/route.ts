@@ -244,18 +244,57 @@ async function callOpenAIJsonSchema<T>(args: {
     );
   }
 
-  const outText = data?.output_text;
-  if (!outText || typeof outText !== "string") {
-    console.error("No output_text:", data);
-    throw new Error("No output_text from OpenAI (Responses API).");
+  // ✅ Robust text extraction for Responses API
+let outText: string | null = null;
+
+// 1) Some responses include output_text
+if (typeof data?.output_text === "string" && data.output_text.trim()) {
+  outText = data.output_text.trim();
+}
+
+// 2) Otherwise, pull from output[].content[]
+if (!outText && Array.isArray(data?.output)) {
+  const texts: string[] = [];
+
+  for (const o of data.output) {
+    const content = o?.content;
+    if (!Array.isArray(content)) continue;
+
+    for (const c of content) {
+      // Most common: { type: "output_text", text: "..." }
+      if (
+        (c?.type === "output_text" || c?.type === "text") &&
+        typeof c?.text === "string" &&
+        c.text.trim()
+      ) {
+        texts.push(c.text.trim());
+      }
+
+      // Sometimes nested like { type:"output_text", text:{ value:"..." } } (rare)
+      if (
+        (c?.type === "output_text" || c?.type === "text") &&
+        typeof c?.text?.value === "string" &&
+        c.text.value.trim()
+      ) {
+        texts.push(c.text.value.trim());
+      }
+    }
   }
 
-  try {
-    return JSON.parse(outText) as T;
-  } catch {
-    console.error("Failed to parse JSON output_text:", outText);
-    throw new Error("Failed to parse JSON output_text from OpenAI.");
-  }
+  if (texts.length) outText = texts.join("\n");
+}
+
+if (!outText) {
+  console.error("No text found in Responses payload:", data);
+  throw new Error("No text found in OpenAI response (Responses API).");
+}
+
+try {
+  return JSON.parse(outText) as T;
+} catch (e) {
+  console.error("Failed to parse JSON from model text:", outText);
+  throw new Error("Failed to parse JSON from OpenAI response text.");
+}
 }
 
 /* =========================================
