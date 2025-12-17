@@ -9,16 +9,12 @@ export const dynamic = "force-dynamic";
 ========================================= */
 
 function buildCorsHeaders(req?: NextRequest) {
-  // Nếu bạn KHÔNG dùng cookies/credentials => '*' là OK
-  // Nếu có dùng credentials: cần đổi sang echo origin + Allow-Credentials
   const origin = req?.headers.get("origin") || "*";
 
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "*",
-    // Nếu bạn bật credentials thì mở dòng này và bỏ '*' ở allow-origin:
-    // "Access-Control-Allow-Credentials": "true",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   } as Record<string, string>;
@@ -68,6 +64,10 @@ function truncateText(text: string, maxChars: number) {
 
 function normalizeCore(text: string) {
   return (text || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function guessExtFromName(name: string) {
+  return (name.split(".").pop() || "").toLowerCase().trim();
 }
 
 /**
@@ -167,6 +167,16 @@ function retrieveTopK(
 }
 
 /* =========================================
+   Base64 helper (for calling /api/file-extract JSON)
+========================================= */
+
+async function fileToDataBase64(file: File): Promise<string> {
+  // ⚠️ Chỉ dùng cho file nhỏ (vì serverless memory/time)
+  const buf = Buffer.from(await file.arrayBuffer());
+  return buf.toString("base64");
+}
+
+/* =========================================
    OpenAI - Responses API
 ========================================= */
 
@@ -249,7 +259,7 @@ async function callOpenAIJsonSchema<T>(args: {
 }
 
 /* =========================================
-   Schemas
+   Schemas (FIX strict required)
 ========================================= */
 
 const AU_SCHEMA_FINAL = {
@@ -267,7 +277,8 @@ const AU_SCHEMA_FINAL = {
             enum: ["remember", "understand", "apply", "analyze", "evaluate", "create"],
           },
         },
-        required: ["core_statement", "bloom_min"],
+        // ✅ strict json_schema: required phải chứa mọi key trong properties
+        required: ["core_statement", "short_explanation", "bloom_min"],
         additionalProperties: false,
       },
     },
@@ -300,7 +311,8 @@ const AU_SCHEMA_CANDIDATE = {
             additionalProperties: false,
           },
         },
-        required: ["core_statement", "bloom_min", "evidence"],
+        // ✅ strict json_schema: required phải chứa mọi key trong properties
+        required: ["core_statement", "short_explanation", "bloom_min", "evidence"],
         additionalProperties: false,
       },
     },
@@ -328,8 +340,29 @@ export async function POST(req: NextRequest) {
     let materialsText = "";
     let unsupported: { name: string; reason: string }[] = [];
 
-    // FormData (frontend đang dùng)
-    if (contentType.includes("multipart/form-data")) {
+    // ✅ Ưu tiên JSON (đúng hướng "extract ở client → gửi materialsText")
+    if (!contentType.includes("multipart/form-data")) {
+      const body = (await req.json().catch(() => ({}))) as any;
+
+      llos_text = (body.llos_text || "").toString();
+      learner_level = (body.learner_level || "").toString();
+      bloom_level = (body.bloom_level || "").toString();
+      specialty_name = (body.specialty_name || "").toString();
+      course_title = (body.course_title || "").toString();
+      lesson_title = (body.lesson_title || "").toString();
+      au_count_raw = (body.au_count ?? "12").toString();
+      materialsText = (body.materialsText || "").toString();
+
+      if (Array.isArray(body.unsupported)) unsupported = body.unsupported;
+
+      if (!llos_text.trim()) {
+        return jsonWithCors(req, { error: "Thiếu LLOs để tạo AU" }, { status: 400 });
+      }
+
+      // OK -> chạy tiếp RAG/OpenAI
+    } else {
+      // ⚠️ Backward compatible: nhận multipart/form-data (file nhỏ)
+      // và gọi /api/file-extract kiểu JSON base64 (hợp file-extract mới)
       const formData = await req.formData();
 
       llos_text = (formData.get("llos_text") || "").toString();
@@ -340,20 +373,30 @@ export async function POST(req: NextRequest) {
       lesson_title = (formData.get("lesson_title") || "").toString();
       au_count_raw = (formData.get("au_count") || "12").toString();
 
+      if (!llos_text.trim()) {
+        return jsonWithCors(req, { error: "Thiếu LLOs để tạo AU" }, { status: 400 });
+      }
+
       const files = formData
         .getAll("files")
         .filter((x) => x instanceof File) as File[];
 
-      // Trích xuất nội dung file (pptx/pdf/docx/...)
       if (files.length > 0) {
-        const fd2 = new FormData();
-        for (const f of files) fd2.append("files", f);
+        // Convert sang JSON base64 cho /api/file-extract
+        const payloadFiles = await Promise.all(
+          files.map(async (f) => ({
+            name: f.name || "unknown",
+            ext: guessExtFromName(f.name || ""),
+            data_base64: await fileToDataBase64(f),
+          }))
+        );
 
         const baseUrl = getBaseUrl(req);
-         const extractRes = await fetch(`${baseUrl}/api/file-extract`, {
-            method: "POST",
-            body: fd2,
-         });
+        const extractRes = await fetch(`${baseUrl}/api/file-extract`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: payloadFiles }),
+        });
 
         const extractData = await extractRes.json().catch(() => ({}));
 
@@ -368,26 +411,11 @@ export async function POST(req: NextRequest) {
           });
         }
       }
-    } else {
-      // JSON fallback
-      const body = (await req.json().catch(() => ({}))) as any;
-      llos_text = (body.llos_text || "").toString();
-      learner_level = (body.learner_level || "").toString();
-      bloom_level = (body.bloom_level || "").toString();
-      specialty_name = (body.specialty_name || "").toString();
-      course_title = (body.course_title || "").toString();
-      lesson_title = (body.lesson_title || "").toString();
-      au_count_raw = (body.au_count ?? "12").toString();
-      materialsText = (body.materialsText || "").toString();
-    }
-
-    if (!llos_text.trim()) {
-      return jsonWithCors(req, { error: "Thiếu LLOs để tạo AU" }, { status: 400 });
     }
 
     const auCount = clampInt(parseInt(au_count_raw, 10), 1, 40);
 
-    // Tránh context quá dài (file nhiều)
+    // materialsText rỗng thì vẫn cho chạy (sẽ ra ít chunk), nhưng báo unsupported
     const materialsTextTrunc = truncateText(materialsText, 180_000);
 
     /* ============================
@@ -461,7 +489,7 @@ Trả về JSON đúng schema.
       evidence: { chunk_id: string; quote: string };
     };
 
-    const gen = await callOpenAIJsonSchema<{ aus: CandidateAU[] }>(/* keep */ {
+    const gen = await callOpenAIJsonSchema<{ aus: CandidateAU[] }>({
       model: DEFAULT_MODEL,
       prompt: genPrompt,
       schemaName: "au_candidates",
