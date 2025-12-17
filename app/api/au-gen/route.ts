@@ -3,9 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-/* =========================
+/* =========================================================
    Helpers
-========================= */
+========================================================= */
 
 function clampInt(n: number, min: number, max: number) {
   if (Number.isNaN(n)) return min;
@@ -57,28 +57,32 @@ function scoreChunk(chunk: string, query: string): number {
     );
 }
 
-async function callGPT(prompt: string) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = (process.env.OPENAI_LLO_MODEL || "gpt-5.1").trim();
+/* =========================================================
+   GPT-5.2 call via Responses API
+========================================================= */
 
+async function callGPT52(prompt: string) {
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
-      response_format: { type: "json_object" },
-      messages: [
+      model: "gpt-5.2",
+      input: [
         {
           role: "system",
           content:
-            "Bạn là trợ lý giáo dục y khoa. CHỈ trả lời JSON đúng schema.",
+            "Bạn là trợ lý giáo dục y khoa. CHỈ trả lời JSON đúng schema, không thêm chữ.",
         },
-        { role: "user", content: prompt },
+        {
+          role: "user",
+          content: prompt,
+        },
       ],
     }),
   });
@@ -88,15 +92,18 @@ async function callGPT(prompt: string) {
     throw new Error(JSON.stringify(data, null, 2));
   }
 
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error("No content from GPT");
+  // GPT-5.x trả text tại output_text
+  const text = data?.output_text;
+  if (!text) {
+    throw new Error("No output_text from GPT-5.2");
+  }
 
-  return JSON.parse(content);
+  return JSON.parse(text);
 }
 
-/* =========================
+/* =========================================================
    POST handler
-========================= */
+========================================================= */
 
 export async function POST(req: NextRequest) {
   try {
@@ -171,7 +178,7 @@ export async function POST(req: NextRequest) {
       .slice(0, 6);
 
     /* =========================
-       GPT #1: Generate AU
+       GPT #1 — Generate AU
     ========================= */
 
     const genPrompt = `
@@ -180,10 +187,10 @@ Bạn là giảng viên ${specialty_name || "y khoa"}.
 CHỈ được dùng các đoạn tài liệu bên dưới để sinh AU.
 KHÔNG suy diễn ngoài tài liệu.
 
-LLO mục tiêu:
+LLO:
 ${llos_text}
 
-ĐOẠN TÀI LIỆU:
+TÀI LIỆU:
 ${ranked
   .map(
     (c) => `
@@ -196,8 +203,8 @@ ${c.content}
 YÊU CẦU:
 - Sinh đúng ${auCount} Assessment Units.
 - Mỗi AU = 1 mệnh đề kiểm tra được.
-- Phải thuộc đúng chuyên ngành.
-- Nếu không đủ dữ liệu, KHÔNG bịa.
+- Thuộc đúng chuyên ngành.
+- Nếu không đủ dữ liệu → KHÔNG bịa.
 
 OUTPUT JSON:
 {
@@ -211,40 +218,36 @@ OUTPUT JSON:
 }
 `.trim();
 
-    const genResult = await callGPT(genPrompt);
-
-    let aus: any[] = Array.isArray(genResult?.aus)
-      ? genResult.aus
-      : [];
+    const genResult = await callGPT52(genPrompt);
+    let aus: any[] = Array.isArray(genResult?.aus) ? genResult.aus : [];
 
     /* =========================
-       GPT #2: Verifier
+       GPT #2 — Verifier
     ========================= */
 
     const verifyPrompt = `
 Bạn là chuyên gia kiểm định nội dung y khoa.
 
-Kiểm tra các AU sau:
+Đối chiếu các AU sau với tài liệu, loại bỏ hoặc chỉnh sửa AU:
+- Không có căn cứ trong đoạn trích
+- Sai hệ chuyên ngành
+- Mơ hồ / không kiểm tra được
+
+AU:
 ${JSON.stringify(aus, null, 2)}
 
-Đối chiếu với tài liệu:
+TÀI LIỆU:
 ${ranked
   .map((c) => `[${c.id}]\n${c.content}`)
   .join("\n\n")}
 
-LOẠI BỎ hoặc SỬA các AU:
-- Không có căn cứ trong tài liệu
-- Sai hệ chuyên ngành
-- Mơ hồ, không kiểm tra được
-
 CHỈ TRẢ JSON:
 {
-  "aus": [ ... AU đã được lọc và chỉnh ... ]
+  "aus": [ ... AU đã được lọc ... ]
 }
 `.trim();
 
-    const verified = await callGPT(verifyPrompt);
-
+    const verified = await callGPT52(verifyPrompt);
     const finalAus = Array.isArray(verified?.aus)
       ? verified.aus.slice(0, auCount)
       : [];
@@ -259,7 +262,10 @@ CHỈ TRẢ JSON:
   } catch (err: any) {
     console.error("AU-gen error:", err);
     return NextResponse.json(
-      { error: "Lỗi server khi sinh AU", detail: String(err?.message || err) },
+      {
+        error: "Lỗi server khi sinh AU",
+        detail: String(err?.message || err),
+      },
       { status: 500 }
     );
   }
