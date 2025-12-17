@@ -25,8 +25,6 @@ function normalizeCore(text: string) {
 
 /**
  * Chunk text theo đoạn, giữ overlap nhẹ để tránh mất ngữ cảnh.
- * - targetChars: kích thước chunk
- * - overlapChars: chồng lấp cuối chunk trước vào chunk sau
  */
 function chunkText(
   text: string,
@@ -36,7 +34,6 @@ function chunkText(
   const clean = (text || "").replace(/\r/g, "").trim();
   if (!clean) return [];
 
-  // tách theo đoạn
   const paras = clean
     .split(/\n{2,}/)
     .map((p) => p.trim())
@@ -52,9 +49,8 @@ function chunkText(
   };
 
   for (const p of paras) {
-    // nếu một paragraph quá dài thì cắt nhỏ thêm
+    // paragraph quá dài -> cắt nhỏ
     if (p.length > targetChars * 1.8) {
-      // flush buf trước
       if (buf.trim()) {
         pushBuf();
         buf = "";
@@ -70,7 +66,6 @@ function chunkText(
 
     if ((buf + "\n\n" + p).length > targetChars) {
       pushBuf();
-      // overlap
       const tail = buf.slice(Math.max(0, buf.length - overlapChars));
       buf = (tail ? tail + "\n\n" : "") + p;
     } else {
@@ -83,8 +78,8 @@ function chunkText(
 }
 
 /**
- * Retrieve đơn giản bằng scoring token overlap (không cần vector DB).
- * Tối ưu cho “một LLO + specialty”.
+ * Retrieve đơn giản bằng scoring token overlap (không cần DB).
+ * Lưu ý: độ “đúng chuyên ngành” dựa vào query (context + LLO).
  */
 function retrieveTopK(
   chunks: { id: string; content: string }[],
@@ -104,14 +99,16 @@ function retrieveTopK(
   const scored = chunks.map((c) => {
     const t = c.content.toLowerCase();
     let score = 0;
+
     for (const w of terms) {
-      // đếm 1 nếu xuất hiện; tránh overcount
       if (t.includes(w)) score += 1;
     }
-    // bonus nếu chunk có cấu trúc “định nghĩa/triệu chứng/pháp trị/…”
-    if (/(triệu chứng|chẩn đoán|pháp trị|phương|huyệt|bát cương|tạng phủ|kinh lạc|biện chứng)/i.test(c.content)) {
+
+    // bonus nhẹ nếu chunk có cấu trúc kiểu guideline/định nghĩa/quy trình/bước/tiêu chuẩn
+    if (/(định nghĩa|tiêu chuẩn|chẩn đoán|điều trị|phác đồ|quy trình|protocol|guideline|mục tiêu|kết cục|liều|chỉ định|chống chỉ định)/i.test(c.content)) {
       score += 1;
     }
+
     return { ...c, score };
   });
 
@@ -121,23 +118,29 @@ function retrieveTopK(
 }
 
 /* =========================================
-   OpenAI GPT-5.2 (Responses API)
+   OpenAI - Responses API
 ========================================= */
 
 const OPENAI_URL = "https://api.openai.com/v1/responses";
+const DEFAULT_MODEL = "gpt-5.2-pro-2025-12-11";
 
-// json_schema: ép model trả đúng schema (ổn định hơn json_object với GPT-5.x)
+/**
+ * Responses API + json_schema strict
+ * - Dùng text.format (mới)
+ * - Không dùng response_format (cũ) -> tránh 400
+ * - Không set temperature theo yêu cầu
+ * - Parse JSON từ output_text để ổn định
+ */
 async function callOpenAIJsonSchema<T>(args: {
   model?: string;
   prompt: string;
   schemaName: string;
   schema: any;
-  temperature?: number;
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-  const model = (args.model || process.env.OPENAI_LLO_MODEL || "gpt-5.2-chat-latest").trim();
+  const model = (args.model || process.env.OPENAI_LLO_MODEL || DEFAULT_MODEL).trim();
 
   const res = await fetch(OPENAI_URL, {
     method: "POST",
@@ -148,10 +151,9 @@ async function callOpenAIJsonSchema<T>(args: {
     body: JSON.stringify({
       model,
       input: args.prompt,
-      temperature: typeof args.temperature === "number" ? args.temperature : 0.2,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
+      text: {
+        format: {
+          type: "json_schema",
           name: args.schemaName,
           schema: args.schema,
           strict: true,
@@ -160,25 +162,48 @@ async function callOpenAIJsonSchema<T>(args: {
     }),
   });
 
-  const data = await res.json().catch(() => ({}));
+  const raw = await res.text();
+  let data: any = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = { _raw: raw };
+  }
 
   if (!res.ok) {
-    // LOG CHI TIẾT để bạn thấy đúng lỗi 403/permission/quota...
-    console.error("OpenAI error:", JSON.stringify(data, null, 2));
+    const reqId =
+      res.headers.get("x-request-id") ||
+      res.headers.get("x-openai-request-id") ||
+      data?.request_id ||
+      null;
+
+    console.error("OpenAI error:", {
+      status: res.status,
+      request_id: reqId,
+      error: data?.error || data,
+    });
+
     throw new Error(
-      `OpenAI ${res.status}: ${JSON.stringify(data?.error || data, null, 2)}`
+      `OpenAI ${res.status}${reqId ? ` (request_id=${reqId})` : ""}: ${
+        typeof data === "string"
+          ? data
+          : JSON.stringify(data?.error || data, null, 2)
+      }`
     );
   }
 
-  // Responses API trả parsed ở output_parsed (khi dùng json_schema)
-  const parsed = data?.output_parsed;
-  if (!parsed) {
-    const outText = data?.output_text;
-    console.error("No output_parsed. output_text:", outText);
-    throw new Error("No output_parsed from OpenAI");
+  const outText = data?.output_text;
+  if (!outText || typeof outText !== "string") {
+    console.error("No output_text:", data);
+    throw new Error("No output_text from OpenAI (Responses API).");
   }
 
-  return parsed as T;
+  try {
+    return JSON.parse(outText) as T;
+  } catch {
+    console.error("Failed to parse JSON output_text:", outText);
+    throw new Error("Failed to parse JSON output_text from OpenAI.");
+  }
 }
 
 /* =========================================
@@ -209,7 +234,6 @@ const AU_SCHEMA_FINAL = {
   additionalProperties: false,
 };
 
-// Candidate schema có “bằng chứng” để verifier bám vào chunk, nhưng cuối cùng ta strip đi
 const AU_SCHEMA_CANDIDATE = {
   type: "object",
   properties: {
@@ -228,7 +252,7 @@ const AU_SCHEMA_CANDIDATE = {
             type: "object",
             properties: {
               chunk_id: { type: "string" },
-              quote: { type: "string" }, // trích ngắn <= 25-40 từ
+              quote: { type: "string" }, // <= ~35 từ
             },
             required: ["chunk_id", "quote"],
             additionalProperties: false,
@@ -262,7 +286,7 @@ export async function POST(req: NextRequest) {
     let materialsText = "";
     let unsupported: { name: string; reason: string }[] = [];
 
-    // ✅ giữ đúng kiểu FormData như app của bạn đang gửi
+    // FormData (frontend đang dùng)
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
 
@@ -274,10 +298,11 @@ export async function POST(req: NextRequest) {
       lesson_title = (formData.get("lesson_title") || "").toString();
       au_count_raw = (formData.get("au_count") || "12").toString();
 
-      // files key: "files"
-      const files = formData.getAll("files").filter((x) => x instanceof File) as File[];
+      const files = formData
+        .getAll("files")
+        .filter((x) => x instanceof File) as File[];
 
-      // gọi /api/file-extract giống logic bạn đang dùng
+      // Trích xuất nội dung file (pptx/pdf/docx/...)
       if (files.length > 0) {
         const fd2 = new FormData();
         for (const f of files) fd2.append("files", f);
@@ -292,9 +317,7 @@ export async function POST(req: NextRequest) {
 
         if (extractRes.ok && extractData?.text) {
           materialsText = extractData.text.toString();
-          if (Array.isArray(extractData.unsupported)) {
-            unsupported = extractData.unsupported;
-          }
+          if (Array.isArray(extractData.unsupported)) unsupported = extractData.unsupported;
         } else {
           console.error("file-extract error:", extractData);
           unsupported.push({
@@ -304,7 +327,7 @@ export async function POST(req: NextRequest) {
         }
       }
     } else {
-      // JSON mode fallback (nếu cần)
+      // JSON fallback
       const body = (await req.json().catch(() => ({}))) as any;
       llos_text = (body.llos_text || "").toString();
       learner_level = (body.learner_level || "").toString();
@@ -322,8 +345,8 @@ export async function POST(req: NextRequest) {
 
     const auCount = clampInt(parseInt(au_count_raw, 10), 1, 40);
 
-    // ✅ Tránh context quá dài: truncate raw materials trước khi chunk
-    const materialsTextTrunc = truncateText(materialsText, 180_000); // 180k chars ~ rất nhiều
+    // Tránh context quá dài (file nhiều)
+    const materialsTextTrunc = truncateText(materialsText, 180_000);
 
     /* ============================
        RAG: chunk → retrieve top-K
@@ -331,50 +354,62 @@ export async function POST(req: NextRequest) {
 
     const chunksAll = chunkText(materialsTextTrunc, 900, 150);
 
-    // nếu không có tài liệu, vẫn chạy nhưng sẽ rất hạn chế; verifier sẽ “gắt” hơn
-    const query = `${specialty_name}\n${course_title}\n${lesson_title}\n${llos_text}`;
+    const query = [
+      specialty_name,
+      course_title,
+      lesson_title,
+      learner_level,
+      bloom_level,
+      llos_text,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
     const topChunks = retrieveTopK(chunksAll, query, 10);
 
     const chunkBlock = topChunks.length
-      ? topChunks
-          .map((c) => `<<<${c.id}>>>\n${c.content}`)
-          .join("\n\n---\n\n")
+      ? topChunks.map((c) => `<<<${c.id}>>>\n${c.content}`).join("\n\n---\n\n")
       : "[Không có chunk tài liệu khả dụng]";
 
     /* ============================
-       STEP 1: GENERATE (có evidence)
+       STEP 1: GENERATE (evidence)
     ============================ */
 
     const genPrompt = `
-Bạn là chuyên gia thiết kế đánh giá trong giáo dục y khoa.
+Bạn là chuyên gia thiết kế đánh giá (assessment design) cho giáo dục chuyên ngành.
 
 MỤC TIÊU
-Sinh đúng ${auCount} Assessment Units (AU) dựa CHẶT vào LLO và TÀI LIỆU (chunk) bên dưới.
+- Sinh đúng ${auCount} Assessment Units (AU) dựa CHẶT vào LLO và TÀI LIỆU (chunks) bên dưới.
+- Tính đúng chuyên ngành/đúng ngữ cảnh phải đến từ chunks. KHÔNG dùng kiến thức ngoài.
 
-NGỮ CẢNH
-- Chuyên ngành: ${specialty_name || "không rõ"}
-- Học phần: ${course_title || "không rõ"}
-- Bài học: ${lesson_title || "không rõ"}
-- Bậc học: ${learner_level || "không rõ"}
-- Bloom mục tiêu: ${bloom_level || "không rõ"}
+NGỮ CẢNH (để định hướng truy hồi/chọn trọng tâm)
+- Specialty/Program: ${specialty_name || "N/A"}
+- Course: ${course_title || "N/A"}
+- Lesson/Topic: ${lesson_title || "N/A"}
+- Learner level: ${learner_level || "N/A"}
+- Target Bloom: ${bloom_level || "N/A"}
 
-LLO
+LLO (Learning Lesson Outcomes)
 ${llos_text}
 
-TÀI LIỆU (CHUNK) — CHỈ ĐƯỢC DÙNG NHỮNG GÌ CÓ TRONG CÁC CHUNK NÀY, KHÔNG BỊA
+TÀI LIỆU (CHUNK)
+CHỈ được sử dụng thông tin xuất hiện trong các chunks dưới đây. Nếu không thấy trong chunks thì KHÔNG được suy đoán.
 ${chunkBlock}
 
 QUY TẮC AU
-- Mỗi AU = 1 mệnh đề kiểm tra được, có đúng/sai rõ.
-- Không gộp 2–3 ý trong một AU.
-- Không “trôi chuyên ngành”. Nếu chuyên ngành là YHCT: ưu tiên tứ chẩn, bát cương, tạng phủ, khí huyết tân dịch, kinh lạc/huyệt, biện chứng luận trị, pháp trị, phương dược, châm cứu/xoa bóp/dưỡng sinh (chỉ dùng Tây y khi LLO yêu cầu đối chiếu).
+- Mỗi AU là 1 mệnh đề kiểm tra được (testable), có thể đánh giá đúng/sai hoặc đạt/không đạt một cách rõ ràng.
+- Tránh mơ hồ, tránh từ “hiểu rõ/tổng quan” nếu không quy đổi được thành tiêu chí kiểm tra.
+- Không gộp nhiều ý trong 1 AU (mỗi AU chỉ 1 ý).
+- Không thêm chi tiết không có trong chunks (không “bịa chuẩn liều”, không “bịa guideline”).
+- Ưu tiên nội dung bám sát LLO và trọng tâm của bài học.
 
 BẮT BUỘC BẰNG CHỨNG
 Mỗi AU phải kèm:
 - evidence.chunk_id: id chunk (ví dụ chunk_3)
-- evidence.quote: trích dẫn ngắn từ chunk đó (tối đa ~35 từ) chứng minh AU (không bịa câu trích).
+- evidence.quote: trích ngắn (<= ~35 từ) đúng từ chunk đó để chứng minh AU. Không được chế câu trích.
 
-OUTPUT: trả JSON theo schema.
+OUTPUT
+Trả về JSON đúng schema.
 `.trim();
 
     type CandidateAU = {
@@ -385,15 +420,15 @@ OUTPUT: trả JSON theo schema.
     };
 
     const gen = await callOpenAIJsonSchema<{ aus: CandidateAU[] }>({
+      model: DEFAULT_MODEL,
       prompt: genPrompt,
       schemaName: "au_candidates",
       schema: AU_SCHEMA_CANDIDATE,
-      temperature: 0.2,
     });
 
     let candidates = Array.isArray(gen?.aus) ? gen.aus : [];
 
-    // loại rỗng & dedup sơ bộ
+    // dedup sơ bộ
     const seen = new Set<string>();
     candidates = candidates.filter((x) => {
       const k = normalizeCore(x?.core_statement || "");
@@ -408,18 +443,19 @@ OUTPUT: trả JSON theo schema.
     ============================ */
 
     const verifyPrompt = `
-Bạn là chuyên gia phản biện/kiểm định nội dung.
+Bạn là verifier/quality reviewer.
 
-NHIỆM VỤ
-- Kiểm tra các AU candidates có bám LLO và có căn cứ trong chunk không.
-- Loại bỏ AU nào:
-  (1) Không có căn cứ rõ trong quote/chunk
-  (2) Sai chuyên ngành hoặc “trôi hệ”
-  (3) Mơ hồ, không kiểm tra được
-  (4) Gộp nhiều ý
-- Nếu AU có thể sửa để đúng hơn (vẫn bám đúng chunk), hãy sửa.
-- Kết quả CUỐI phải có đúng ${auCount} AU.
-- Nếu sau khi lọc còn thiếu, hãy tạo thêm AU MỚI nhưng vẫn CHỈ dựa trên chunk.
+MỤC TIÊU
+- Kiểm định AU candidates có bám LLO và có bằng chứng trong chunks hay không.
+- Kết quả cuối phải có đúng ${auCount} AU.
+
+NGUYÊN TẮC (RẤT QUAN TRỌNG)
+- Chỉ sử dụng thông tin có trong chunks.
+- Nếu AU không có căn cứ rõ trong quote/chunk => loại hoặc sửa để khớp chunks.
+- Nếu AU mơ hồ/không kiểm tra được => sửa cho testable hoặc loại.
+- Nếu AU gộp nhiều ý => tách hoặc viết lại thành 1 ý.
+- Nếu thiếu số lượng sau khi lọc => tạo thêm AU MỚI nhưng vẫn chỉ dựa trên chunks.
+- Không yêu cầu “đúng chuyên ngành” bằng suy đoán: hãy để chunks quyết định ngữ cảnh chuyên ngành.
 
 LLO
 ${llos_text}
@@ -430,19 +466,20 @@ ${chunkBlock}
 AU CANDIDATES (có evidence)
 ${JSON.stringify(candidates, null, 2)}
 
-OUTPUT: chỉ JSON theo schema aus[ {core_statement, short_explanation, bloom_min} ].
+OUTPUT
+Chỉ trả JSON theo schema aus[{core_statement, short_explanation, bloom_min}].
 `.trim();
 
     const verified = await callOpenAIJsonSchema<{ aus: any[] }>({
+      model: DEFAULT_MODEL,
       prompt: verifyPrompt,
       schemaName: "au_verified",
       schema: AU_SCHEMA_FINAL,
-      temperature: 0.1,
     });
 
     let finalAus = Array.isArray(verified?.aus) ? verified.aus : [];
 
-    // clean, trim, dedup lần cuối
+    // clean + dedup cuối
     const seen2 = new Set<string>();
     finalAus = finalAus
       .map((x: any) => ({
@@ -463,8 +500,7 @@ OUTPUT: chỉ JSON theo schema aus[ {core_statement, short_explanation, bloom_mi
       });
 
     /* ============================
-       STEP 3: REPAIR (nếu verifier thiếu)
-       (thường hiếm khi thiếu, nhưng để “đủ số” đúng yêu cầu)
+       STEP 3: REPAIR (nếu thiếu)
     ============================ */
 
     if (finalAus.length < auCount) {
@@ -474,10 +510,9 @@ OUTPUT: chỉ JSON theo schema aus[ {core_statement, short_explanation, bloom_mi
 Bạn cần bổ sung ${need} AU để đủ đúng ${auCount} AU.
 
 RÀNG BUỘC
-- Không được trùng với các AU đã có.
-- CHỈ dựa vào chunk tài liệu, không bịa.
-- Mỗi AU là 1 mệnh đề kiểm tra được.
-- Bám LLO.
+- Không trùng các AU đã có.
+- Chỉ dựa vào chunks, không dùng kiến thức ngoài.
+- Mỗi AU là 1 mệnh đề kiểm tra được (testable) và bám LLO.
 
 LLO
 ${llos_text}
@@ -488,14 +523,15 @@ ${chunkBlock}
 AU ĐÃ CÓ
 ${JSON.stringify(finalAus, null, 2)}
 
-OUTPUT JSON theo schema aus[].
+OUTPUT
+Trả JSON theo schema aus[].
 `.trim();
 
       const repaired = await callOpenAIJsonSchema<{ aus: any[] }>({
+        model: DEFAULT_MODEL,
         prompt: repairPrompt,
         schemaName: "au_repair",
         schema: AU_SCHEMA_FINAL,
-        temperature: 0.2,
       });
 
       const extra = Array.isArray(repaired?.aus) ? repaired.aus : [];
@@ -505,6 +541,7 @@ OUTPUT JSON theo schema aus[].
         if (!core || !k) continue;
         if (seen2.has(k)) continue;
         seen2.add(k);
+
         finalAus.push({
           core_statement: core,
           short_explanation:
@@ -513,14 +550,13 @@ OUTPUT JSON theo schema aus[].
               : null,
           bloom_min: (x?.bloom_min || "").toString().trim(),
         });
+
         if (finalAus.length >= auCount) break;
       }
     }
 
-    // đảm bảo đúng số lượng
     finalAus = finalAus.slice(0, auCount);
 
-    // nếu vẫn thiếu (rất hiếm): báo lỗi rõ ràng để bạn biết tài liệu không đủ
     if (finalAus.length < auCount) {
       return NextResponse.json(
         {
@@ -536,10 +572,9 @@ OUTPUT JSON theo schema aus[].
   } catch (err: any) {
     console.error("Lỗi server /api/au-gen:", err);
 
-    // Nếu bạn vẫn gặp 403, phần detail sẽ in đúng lỗi OpenAI trả về
     return NextResponse.json(
       {
-        error: "Lỗi server khi sinh AU (GPT-5.2 RAG)",
+        error: "Lỗi server khi sinh AU (GPT-5.2-pro RAG)",
         detail: String(err?.message || err),
       },
       { status: 500 }
