@@ -39,6 +39,23 @@ type McqItem = {
   created_at: string;
 };
 
+type McqOption = {
+  id: string;
+  item_id: string;
+  label: string;
+  text: string;
+  is_correct: boolean;
+  created_at?: string | null;
+};
+
+function escapeHtml(str: string) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 type SearchProfile = {
   id: string;
   email: string | null;
@@ -213,6 +230,8 @@ function MyMcqBankTab({
   const [llos, setLlos] = useState<Llo[]>([]);
   const [mcqs, setMcqs] = useState<McqItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const [selectedCourseId, setSelectedCourseId] = useState<string | "">("");
   const [selectedLessonId, setSelectedLessonId] = useState<string | "">("");
@@ -344,6 +363,84 @@ function MyMcqBankTab({
     llos,
   ]);
 
+    async function handleExportWord() {
+    setExportError(null);
+
+    if (filteredMcqs.length === 0) {
+      setExportError("Không có câu hỏi nào trong danh sách đang hiển thị để xuất.");
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const mcqIds = filteredMcqs.map((m) => m.id);
+
+      const { data: optionRows, error: optErr } = await supabase
+        .from("mcq_options")
+        .select("id, item_id, label, text, is_correct, created_at")
+        .in("item_id", mcqIds)
+        .order("item_id", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (optErr) throw optErr;
+
+      const optionsByMcq = new Map<string, McqOption[]>();
+      (optionRows || []).forEach((o) => {
+        const row = o as McqOption;
+        if (!optionsByMcq.has(row.item_id)) {
+          optionsByMcq.set(row.item_id, []);
+        }
+        optionsByMcq.get(row.item_id)!.push(row);
+      });
+
+      let html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Ngân hàng MCQ</title>
+</head>
+<body>
+`;
+
+      filteredMcqs.forEach((m, idx) => {
+        html += `<p><strong>Câu ${idx + 1}.</strong> ${escapeHtml(m.stem)}</p>\n`;
+
+        const opts = optionsByMcq.get(m.id) || [];
+
+        // In theo đúng label lưu trong DB (A/B/C/D...)
+        opts.forEach((opt) => {
+          const text = `${opt.label}. ${escapeHtml(opt.text)}`;
+          if (opt.is_correct) {
+            html += `<p><strong>${text}</strong></p>\n`;
+          } else {
+            html += `<p>${text}</p>\n`;
+          }
+        });
+
+        html += `<p>&nbsp;</p>\n`;
+      });
+
+      html += `</body></html>`;
+
+      const blob = new Blob([html], {
+        type: "application/msword;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ngan_hang_mcq.doc";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      console.error(e);
+      setExportError(e.message ?? "Lỗi khi xuất file Word.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const selectedCount = selectedMcqIds.size;
 
   return (
@@ -422,7 +519,7 @@ function MyMcqBankTab({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-xs mb-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs mb-2">
           <div className="text-slate-500">
             Đang hiển thị{" "}
             <span className="font-semibold text-slate-700">
@@ -430,25 +527,39 @@ function MyMcqBankTab({
             </span>{" "}
             câu hỏi.
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500">
-              Đã chọn{" "}
-              <span className="font-semibold text-slate-700">
-                {selectedCount}
-              </span>{" "}
-              câu để chia sẻ.
-            </span>
-            {selectedCount > 0 && (
-              <button
-                type="button"
-                onClick={onClearSelection}
-                className="text-[11px] text-slate-500 hover:text-red-500"
-              >
-                Bỏ chọn
-              </button>
-            )}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">
+                Đã chọn{" "}
+                <span className="font-semibold text-slate-700">
+                  {selectedCount}
+                </span>{" "}
+                câu để chia sẻ.
+              </span>
+              {selectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={onClearSelection}
+                  className="text-[11px] text-slate-500 hover:text-red-500"
+                >
+                  Bỏ chọn
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleExportWord}
+              disabled={exporting || filteredMcqs.length === 0}
+              className="inline-flex items-center rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {exporting ? "Đang xuất..." : "Xuất Word (theo bộ lọc)"}
+            </button>
           </div>
         </div>
+
+        {exportError && (
+          <div className="mb-2 text-[11px] text-red-600">{exportError}</div>
+        )}
 
         {loading ? (
           <p className="text-sm text-slate-500">Đang tải MCQ...</p>
