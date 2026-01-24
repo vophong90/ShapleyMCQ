@@ -121,8 +121,7 @@ async function requireAdmin(req: NextRequest) {
 
   const role = (profile as any).role || null;
 
-  const isAdmin =
-    ["admin"].includes(String(role || ""));
+  const isAdmin = ["admin"].includes(String(role || ""));
 
   if (!isAdmin) {
     return { ok: false, status: 403, error: "Admin only" as const };
@@ -188,11 +187,15 @@ type Body = {
   // optional overrides
   chunk_target_chars?: number; // default 900
   chunk_overlap_chars?: number; // default 150
-  embedding_model?: string; // default env or DEFAULT_EMBED_MODEL
+  embedding_model?: string; // default env hoặc DEFAULT_EMBED_MODEL
 
   // nếu true: xóa chunks cũ rồi ingest lại
   rebuild?: boolean;
 };
+
+/* =========================================
+   Handler
+========================================= */
 
 export async function POST(req: NextRequest) {
   // ✅ admin-only
@@ -256,48 +259,55 @@ export async function POST(req: NextRequest) {
     }
     jobId = job.id;
 
-    // 3) Download file from storage
-    const dl = await supabaseAdmin.storage
-      .from(book.storage_bucket)
-      .download(book.storage_path);
+    // 3) Tạo signed URL để /api/file-extract tự tải file (tránh base64 quá lớn)
+    await supabaseAdmin
+      .from("book_ingest_jobs")
+      .update({ step: "extract_signed_url" })
+      .eq("id", jobId);
 
-    if (dl.error || !dl.data) {
+    const { data: signed, error: signedErr } = await supabaseAdmin.storage
+      .from(book.storage_bucket)
+      .createSignedUrl(book.storage_path, 60 * 10); // 10 phút
+
+    if (signedErr || !signed?.signedUrl) {
       await supabaseAdmin
         .from("book_ingest_jobs")
-        .update({ status: "failed", step: "download", error: dl.error?.message })
+        .update({
+          status: "failed",
+          step: "extract_signed_url",
+          error: signedErr?.message || "createSignedUrl failed",
+        })
         .eq("id", jobId);
 
       return json(
-        { error: "Storage download failed", detail: dl.error?.message || null },
+        {
+          error: "createSignedUrl failed",
+          detail: signedErr?.message || null,
+        },
         { status: 400 }
       );
     }
 
-    const fileBuf = Buffer.from(await dl.data.arrayBuffer());
-    const base64 = fileBuf.toString("base64");
     const ext =
       guessExtFromName(book.storage_path) ||
       guessExtFromName(book.title) ||
       "bin";
 
-    // 4) Extract text via your existing /api/file-extract
+    // 4) Gọi /api/file-extract với file_url
     await supabaseAdmin
       .from("book_ingest_jobs")
       .update({ step: "extract" })
       .eq("id", jobId);
 
     const baseUrl = getBaseUrl(req);
+
     const extractRes = await fetch(`${baseUrl}/api/file-extract`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        files: [
-          {
-            name: `${book.title}.${ext}`,
-            ext,
-            data_base64: base64,
-          },
-        ],
+        file_url: signed.signedUrl,
+        name: `${book.title}.${ext}`,
+        ext,
       }),
     });
 
@@ -403,12 +413,12 @@ export async function POST(req: NextRequest) {
       .update({ step: "embed_and_insert" })
       .eq("id", jobId);
 
-    const embeddingModel =
-      (body.embedding_model ||
-        process.env.OPENAI_EMBED_MODEL ||
-        book.embedding_model ||
-        DEFAULT_EMBED_MODEL
-      ).trim();
+    const embeddingModel = (
+      body.embedding_model ||
+      process.env.OPENAI_EMBED_MODEL ||
+      book.embedding_model ||
+      DEFAULT_EMBED_MODEL
+    ).trim();
 
     const embeddingDim =
       modelToDim(embeddingModel) ?? (book.embedding_dim ?? null);
