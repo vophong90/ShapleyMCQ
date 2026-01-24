@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 import Sparkline from "@/components/charts/Sparkline";
 import BarMini from "@/components/charts/BarMini";
@@ -14,74 +15,97 @@ type DashboardStats = {
   auCount: number;
   misCount: number;
   mcqCount: number;
+
   bloomLlo?: any;
   bloomAu?: any;
   bloomMcq?: any;
   sparklineMcq?: any;
-  // nếu API còn field khác thì cứ giữ nguyên, ở đây chỉ khai báo tối thiểu
+};
+
+type ProjectRow = {
+  id: string;
+  title: string;
+  progress?: number | null;
+  updated_at?: string | null;
+  courses?: { title?: string | null } | null;
+  lessons?: { title?: string | null } | null;
 };
 
 export default function DashboardPage() {
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
+
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [projects, setProjects] = useState<any[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function load() {
-      // 1) Lấy access_token từ Supabase client
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    let alive = true;
 
-      if (!session?.access_token) {
-        console.error("Không có session Supabase");
-        setLoading(false);
-        return;
-      }
+    async function getUserHeaderFromSession(): Promise<string | null> {
+      // 1) Lấy access_token từ Supabase session
+      const { data, error } = await supabase.auth.getSession();
+      const accessToken = data?.session?.access_token;
 
-      const accessToken = session.access_token;
+      if (error || !accessToken) return null;
 
-      // 2) Gửi token lên API /auth/session để lấy user_id (qua header Authorization)
+      // 2) Gửi token lên /api/auth/session để lấy user header theo chuẩn API hiện tại
       const r = await fetch("/api/auth/session", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
-      if (!r.ok) {
-        console.error("Auth session lỗi");
-        setLoading(false);
-        return;
-      }
+      if (!r.ok) return null;
 
       // API trả về userId dưới dạng header Authorization: Bearer <user_id>
-      const userHeader = r.headers.get("Authorization") ?? "";
+      return r.headers.get("Authorization");
+    }
 
-      // 3) Lấy STATS
-      const res1 = await fetch("/api/dashboard/stats", {
-        headers: { Authorization: userHeader },
-      });
+    async function load() {
+      try {
+        setLoading(true);
 
-      const statsJson = await res1.json().catch(() => null);
+        const userHeader = await getUserHeaderFromSession();
+        if (!userHeader) {
+          if (!alive) return;
+          setStats(null);
+          setProjects([]);
+          return;
+        }
 
-      // 4) Lấy PROJECTS
-      const res2 = await fetch("/api/dashboard/projects?page=1&limit=5", {
-        headers: { Authorization: userHeader },
-      });
+        const [resStats, resProjects] = await Promise.all([
+          fetch("/api/dashboard/stats", { headers: { Authorization: userHeader } }),
+          fetch("/api/dashboard/projects?page=1&limit=5", {
+            headers: { Authorization: userHeader },
+          }),
+        ]);
 
-      const projJson = await res2.json().catch(() => null);
+        const statsJson = await resStats.json().catch(() => null);
+        const projJson = await resProjects.json().catch(() => null);
 
-      setStats(statsJson || null);
-      setProjects(projJson?.items ?? []);
-      setLoading(false);
+        if (!alive) return;
+
+        setStats(statsJson || null);
+        setProjects((projJson?.items ?? []) as ProjectRow[]);
+      } catch (e) {
+        console.error(e);
+        if (!alive) return;
+        setStats(null);
+        setProjects([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
     }
 
     load();
-  }, []);
+
+    return () => {
+      alive = false;
+    };
+  }, [supabase]);
 
   if (loading) {
     return <p className="p-4 text-slate-500">Đang tải Dashboard…</p>;
   }
 
-  // Fallback an toàn nếu stats null
   const safeStats: DashboardStats = {
     courseCount: stats?.courseCount ?? 0,
     lessonCount: stats?.lessonCount ?? 0,
@@ -95,19 +119,15 @@ export default function DashboardPage() {
     sparklineMcq: stats?.sparklineMcq,
   };
 
-  const hasBloomLlo =
-    Array.isArray(safeStats.bloomLlo) && safeStats.bloomLlo.length > 0;
-  const hasBloomAu =
-    Array.isArray(safeStats.bloomAu) && safeStats.bloomAu.length > 0;
-  const hasBloomMcq =
-    Array.isArray(safeStats.bloomMcq) && safeStats.bloomMcq.length > 0;
+  const hasBloomLlo = Array.isArray(safeStats.bloomLlo) && safeStats.bloomLlo.length > 0;
+  const hasBloomAu = Array.isArray(safeStats.bloomAu) && safeStats.bloomAu.length > 0;
+  const hasBloomMcq = Array.isArray(safeStats.bloomMcq) && safeStats.bloomMcq.length > 0;
   const hasSparklineMcq =
-    Array.isArray(safeStats.sparklineMcq) &&
-    safeStats.sparklineMcq.length > 0;
+    Array.isArray(safeStats.sparklineMcq) && safeStats.sparklineMcq.length > 0;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
-      {/* ======= HÀNG KPI ========= */}
+      {/* ======= KPI ========= */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <KpiCard label="Học phần" value={safeStats.courseCount} />
         <KpiCard label="Bài học" value={safeStats.lessonCount} />
@@ -116,89 +136,68 @@ export default function DashboardPage() {
           value={safeStats.lloCount}
           chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined}
         />
-        <KpiCard 
-          label="Assessment Units" 
-          value={safeStats.auCount} 
-          chart={hasBloomAu ? 
-          <BarMini data={safeStats.bloomAu} /> : undefined} 
-          />
+        <KpiCard
+          label="Assessment Units"
+          value={safeStats.auCount}
+          chart={hasBloomAu ? <BarMini data={safeStats.bloomAu} /> : undefined}
+        />
         <KpiCard label="Misconceptions" value={safeStats.misCount} />
         <KpiCard
           label="MCQ Items"
           value={safeStats.mcqCount}
-          chart={
-            hasSparklineMcq ? (
-              <Sparkline data={safeStats.sparklineMcq} />
-            ) : undefined
-          }
+          chart={hasSparklineMcq ? <Sparkline data={safeStats.sparklineMcq} /> : undefined}
         />
       </div>
 
-      {/* ======= HÀNG MODULES – 5 BƯỚC WIZARD ========= */}
+      {/* ======= MODULES – 5 BƯỚC WIZARD ========= */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900 mb-2">
           Quy trình 5 bước xây dựng ngân hàng MCQ
         </h2>
         <p className="text-xs text-slate-500 mb-4">
-          Mỗi bước hoạt động độc lập – bạn có thể vào bất cứ bước nào, bất cứ
-          lúc nào.
+          Mỗi bước hoạt động độc lập – bạn có thể vào bất cứ bước nào, bất cứ lúc nào.
         </p>
 
         <div className="grid md:grid-cols-3 gap-4">
-          {/* Bước 1 */}
           <ModuleCard
             title="Bước 1. Context & LLO"
             desc="Thiết lập học phần, bài học và LLO; gắn Bloom, level, bối cảnh."
             href="/wizard/context"
-            chart={
-              hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined
-            }
+            chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined}
           />
 
-          {/* Bước 2 */}
           <ModuleCard
             title="Bước 2. Assessment Units"
             desc="Sinh và quản lý Assessment Units từ LLO, chuẩn bị nền cho Mis & MCQ."
             href="/wizard/au"
             chart={hasBloomAu ? <BarMini data={safeStats.bloomAu} /> : undefined}
-            />
+          />
 
-          {/* Bước 3 */}
           <ModuleCard
             title="Bước 3. Misconceptions"
             desc="Sinh Misconceptions từ AU bằng GPT, duyệt và quản lý lỗi nhận thức."
             href="/wizard/misconcepts"
           />
 
-          {/* Bước 4 */}
           <ModuleCard
             title="Bước 4. MCQ Generator"
             desc="Sinh bộ câu hỏi MCQ từ AU + Mis đã duyệt; thiết kế theo blueprint."
             href="/wizard/mcq"
-            chart={
-              hasBloomMcq ? <DonutMini data={safeStats.bloomMcq} /> : undefined
-            }
+            chart={hasBloomMcq ? <DonutMini data={safeStats.bloomMcq} /> : undefined}
           />
 
-          {/* Bước 5 */}
           <ModuleCard
             title="Bước 5. MCQ Analysis"
             desc="Phân tích bộ đề: độ khó, phân biệt, distrator, Shapley... (đang phát triển)."
             href="/wizard/simulate"
-            chart={
-              hasSparklineMcq ? (
-                <Sparkline data={safeStats.sparklineMcq} />
-              ) : undefined
-            }
+            chart={hasSparklineMcq ? <Sparkline data={safeStats.sparklineMcq} /> : undefined}
           />
         </div>
       </div>
 
       {/* ======= PROJECTS ========= */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-2">
-          Các dự án MCQ gần đây
-        </h2>
+        <h2 className="text-lg font-semibold text-slate-900 mb-2">Các dự án MCQ gần đây</h2>
 
         <div className="bg-white border rounded-xl p-4">
           {projects.length === 0 ? (
@@ -224,15 +223,10 @@ export default function DashboardPage() {
                     <td className="py-2">{p.lessons?.title ?? "-"}</td>
                     <td className="py-2">{p.progress ?? 0}%</td>
                     <td className="py-2">
-                      {p.updated_at
-                        ? new Date(p.updated_at).toLocaleDateString("vi-VN")
-                        : "-"}
+                      {p.updated_at ? new Date(p.updated_at).toLocaleDateString("vi-VN") : "-"}
                     </td>
                     <td className="py-2">
-                      <a
-                        href={`/wizard/project/${p.id}`}
-                        className="text-brand-600 hover:underline"
-                      >
+                      <a href={`/wizard/project/${p.id}`} className="text-brand-600 hover:underline">
                         Tiếp tục →
                       </a>
                     </td>
@@ -250,15 +244,7 @@ export default function DashboardPage() {
 /* ======================================
    COMPONENTS
 ======================================= */
-function KpiCard({
-  label,
-  value,
-  chart,
-}: {
-  label: string;
-  value: number;
-  chart?: React.ReactNode;
-}) {
+function KpiCard({ label, value, chart }: { label: string; value: number; chart?: ReactNode }) {
   return (
     <div className="bg-white rounded-xl p-4 border shadow-sm">
       <p className="text-xs text-slate-500">{label}</p>
@@ -277,7 +263,7 @@ function ModuleCard({
   title: string;
   desc: string;
   href: string;
-  chart?: React.ReactNode;
+  chart?: ReactNode;
 }) {
   return (
     <div className="bg-white rounded-xl p-4 border shadow-sm flex flex-col justify-between">
@@ -287,10 +273,7 @@ function ModuleCard({
         {chart && <div className="mb-3">{chart}</div>}
       </div>
 
-      <a
-        href={href}
-        className="inline-block mt-1 px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white"
-      >
+      <a href={href} className="inline-block mt-1 px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white">
         Mở →
       </a>
     </div>
