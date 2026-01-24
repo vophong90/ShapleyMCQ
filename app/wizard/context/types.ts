@@ -18,6 +18,7 @@ export type Lesson = {
   course_id: string;
 };
 
+// Giữ llos_text để đọc lại localStorage cũ, nhưng UI sẽ dùng lloList
 export type ContextState = {
   specialty_id: string;
   learner_level: string;
@@ -61,6 +62,7 @@ export type LloEvalResult = {
   items: LloEvalItem[];
 };
 
+// Row của VIEW v_llos_with_stats
 export type ExistingLloRow = {
   llo_id: string;
   text: string;
