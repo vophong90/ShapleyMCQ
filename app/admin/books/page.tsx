@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState, ChangeEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getSupabaseBrowser } from "@/lib/supabase-browser";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type BookRow = {
   id: string;
