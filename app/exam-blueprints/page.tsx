@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 /* ------------------ TYPES ------------------ */
 type Course = {
@@ -43,6 +43,9 @@ export default function ExamBlueprintListPage() {
   const [newDesc, setNewDesc] = useState("");
   const [newCourseId, setNewCourseId] = useState<string>("");
 
+  // ✅ Dùng supabase-browser.ts
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
+
   /* ------------------ LOAD ALL ------------------ */
   useEffect(() => {
     async function loadAll() {
@@ -75,7 +78,7 @@ export default function ExamBlueprintListPage() {
         const { data: courseData, error: cErr } = await supabase
           .from("courses")
           .select("id, title, code")
-          .eq("owner_id", user.id)          // 🔴 FIXED: chỉ lấy đúng học phần thuộc user
+          .eq("owner_id", user.id) // chỉ lấy đúng học phần thuộc user
           .order("title", { ascending: true });
 
         if (cErr) throw cErr;
@@ -90,7 +93,7 @@ export default function ExamBlueprintListPage() {
     }
 
     loadAll();
-  }, []);
+  }, [supabase]);
 
   /* ------------------ HANDLE CREATE BLUEPRINT ------------------ */
   async function createBlueprint() {
@@ -126,10 +129,11 @@ export default function ExamBlueprintListPage() {
       setNewDesc("");
       setNewCourseId("");
 
-      // reload blueprint list
+      // reload blueprint list (có thể muốn filter theo owner_id như ở trên)
       const { data: bpReload } = await supabase
         .from("exam_blueprints")
         .select("id, title, description, created_at, config")
+        .eq("owner_id", user?.id)
         .order("created_at", { ascending: false });
 
       setBlueprints((bpReload || []) as ExamBlueprintRow[]);
