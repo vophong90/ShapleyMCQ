@@ -1,3 +1,4 @@
+// app/exams/[examId]/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -37,6 +38,34 @@ type SimResult = {
   detail?: string;
 };
 
+type SimHistoryRow = {
+  id: string;
+  exam_id: string;
+  model: string | null;
+  n_students: number | null;
+  k_choice: number | null;
+
+  theta_mu: number | null;
+  theta_sigma: number | null;
+
+  theta_cut: number | null;
+  raw_cut_percent: number | null;
+  bin_width: number | null;
+
+  overall_misclass: number | null;
+  worstcase_misclass: number | null;
+  false_pass: number | null;
+  false_fail: number | null;
+
+  created_at: string;
+};
+
+function fmtPct(x?: number | null) {
+  if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
+  const v = Number(x);
+  return `${v.toFixed(2)}%`;
+}
+
 export default function ExamPreviewPage() {
   const params = useParams();
   const examId = params?.examId as string;
@@ -58,6 +87,11 @@ export default function ExamPreviewPage() {
   // IRT simulate UI
   const [simulating, setSimulating] = useState(false);
   const [sim, setSim] = useState<SimResult | null>(null);
+
+  // ✅ IRT history
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [history, setHistory] = useState<SimHistoryRow[]>([]);
+  const [historyErr, setHistoryErr] = useState<string | null>(null);
 
   // Sim params
   const [nStudents, setNStudents] = useState(5000);
@@ -107,6 +141,31 @@ export default function ExamPreviewPage() {
 
     if (examId) load();
   }, [examId, supabase]);
+
+  // ✅ Load IRT history
+  async function loadHistory() {
+    setHistoryLoading(true);
+    setHistoryErr(null);
+    try {
+      const res = await fetch(`/api/exams/irt-simulations?exam_id=${examId}`);
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || "Không tải được lịch sử IRT.");
+      }
+      setHistory((json.rows || []) as SimHistoryRow[]);
+    } catch (e: any) {
+      console.error(e);
+      setHistoryErr(e?.message || "Lỗi tải lịch sử IRT.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!examId) return;
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examId]);
 
   async function runGptLabel() {
     setLabeling(true);
@@ -163,6 +222,9 @@ export default function ExamPreviewPage() {
       }
 
       setSim(json as SimResult);
+
+      // ✅ refresh history after a successful run
+      loadHistory();
     } catch (e: any) {
       console.error(e);
       setSim({
@@ -172,6 +234,34 @@ export default function ExamPreviewPage() {
     } finally {
       setSimulating(false);
     }
+  }
+
+  // ✅ Click a history row to show it in the "Results" panel
+  function showHistoryRow(row: SimHistoryRow) {
+    const J = items.length || undefined;
+    setSim({
+      success: true,
+      sim_id: row.id,
+      J,
+      raw_cut_percent: row.raw_cut_percent ?? undefined,
+      overall_misclass: row.overall_misclass ?? undefined,
+      worstcase_misclass: row.worstcase_misclass ?? undefined,
+      false_pass: row.false_pass ?? undefined,
+      false_fail: row.false_fail ?? undefined,
+      // raw_cut: không lưu trong table hiện tại → mình suy ra nếu có J
+      raw_cut:
+        J && row.raw_cut_percent != null
+          ? Math.ceil(Number(row.raw_cut_percent) * J)
+          : undefined,
+      worstcase_bin:
+        row.theta_cut != null && row.bin_width != null
+          ? {
+              theta_cut: Number(row.theta_cut),
+              bin_width: Number(row.bin_width),
+              n_in_bin: 0, // table list không trả n_in_bin (nếu anh lưu thì thêm field)
+            }
+          : undefined,
+    });
   }
 
   if (loading) {
@@ -232,6 +322,80 @@ export default function ExamPreviewPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ✅ IRT history card */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Lịch sử IRT mô phỏng</h2>
+          <button
+            onClick={loadHistory}
+            disabled={historyLoading}
+            className="px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {historyLoading ? "Đang tải…" : "Tải lại"}
+          </button>
+        </div>
+
+        {historyErr && <div className="text-sm text-red-600">{historyErr}</div>}
+
+        {historyLoading ? (
+          <div className="text-sm text-slate-600">Đang tải lịch sử…</div>
+        ) : history.length === 0 ? (
+          <div className="text-sm text-slate-600">
+            Chưa có lần chạy nào. Hãy chạy mô phỏng bên dưới.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 border-b border-slate-200">
+                  <th className="py-2 pr-4">Thời gian</th>
+                  <th className="py-2 pr-4">N</th>
+                  <th className="py-2 pr-4">Cut%</th>
+                  <th className="py-2 pr-4">Overall</th>
+                  <th className="py-2 pr-4">Worst-case</th>
+                  <th className="py-2 pr-4">Đậu sai</th>
+                  <th className="py-2 pr-4">Rớt oan</th>
+                  <th className="py-2 pr-4"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-100">
+                    <td className="py-2 pr-4 text-slate-700">
+                      {new Date(r.created_at).toLocaleString("vi-VN")}
+                    </td>
+                    <td className="py-2 pr-4">{r.n_students ?? "—"}</td>
+                    <td className="py-2 pr-4">
+                      {r.raw_cut_percent != null ? r.raw_cut_percent : "—"}
+                    </td>
+                    <td className="py-2 pr-4 font-medium">
+                      {fmtPct(r.overall_misclass)}
+                    </td>
+                    <td className="py-2 pr-4 font-medium">
+                      {fmtPct(r.worstcase_misclass)}
+                    </td>
+                    <td className="py-2 pr-4">{fmtPct(r.false_pass)}</td>
+                    <td className="py-2 pr-4">{fmtPct(r.false_fail)}</td>
+                    <td className="py-2 pr-0">
+                      <button
+                        onClick={() => showHistoryRow(r)}
+                        className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        Xem
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="text-[11px] text-slate-500 mt-2">
+              * Bấm “Xem” để nạp kết quả vào khung “Kết quả mô phỏng” bên dưới (không chạy lại).
+            </div>
+          </div>
+        )}
       </div>
 
       {/* IRT simulate card */}
@@ -351,14 +515,6 @@ export default function ExamPreviewPage() {
                 <div className="text-xs text-slate-600 mt-2">
                   Raw cut = {sim.raw_cut} / {sim.J} câu đúng (raw_cut_percent ={" "}
                   {sim.raw_cut_percent})
-                  {sim.worstcase_bin ? (
-                    <>
-                      {" "}
-                      — Worst-case bin: θ ∈ [{sim.worstcase_bin.theta_cut} ±{" "}
-                      {sim.worstcase_bin.bin_width / 2}], n_in_bin ={" "}
-                      {sim.worstcase_bin.n_in_bin}
-                    </>
-                  ) : null}
                 </div>
               </>
             ) : (
