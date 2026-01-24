@@ -1,13 +1,13 @@
 // app/api/admin/books/list/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminClient } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    const supabaseAdmin = getAdminClient();
+    const supabaseAdmin = getSupabaseAdmin();
 
     const { searchParams } = new URL(req.url);
     const keyword = (searchParams.get("keyword") || "").trim();
