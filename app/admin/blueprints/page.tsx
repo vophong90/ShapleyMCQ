@@ -1,8 +1,9 @@
+// app/admin/blueprints/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Profile = {
   id: string;
@@ -37,6 +38,7 @@ const BLOOM_LEVELS = [
 
 export default function AdminBlueprintsPage() {
   const router = useRouter();
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
   const [loadingMe, setLoadingMe] = useState(true);
@@ -49,15 +51,16 @@ export default function AdminBlueprintsPage() {
   const [bloomFilter, setBloomFilter] = useState<string>("all");
   const [specialtyFilter, setSpecialtyFilter] = useState<string>("all");
 
-  // 1. Check admin + load data
+  // 1) Check login + role (client) + load initial data
   useEffect(() => {
     (async () => {
       setLoadingMe(true);
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
 
-      if (!session) {
+      const { data, error: userErr } = await supabase.auth.getUser();
+      const user = data.user;
+
+      if (userErr || !user) {
+        setLoadingMe(false);
         router.replace("/login");
         return;
       }
@@ -65,25 +68,26 @@ export default function AdminBlueprintsPage() {
       const { data: me, error } = await supabase
         .from("profiles")
         .select("id, email, name, role")
-        .eq("id", session.user.id)
+        .eq("id", user.id)
         .single();
 
-      setLoadingMe(false);
-
       if (error || !me) {
+        setLoadingMe(false);
         router.replace("/login");
         return;
       }
 
-      setCurrentProfile(me);
-
       if (me.role !== "admin") {
+        setLoadingMe(false);
         router.replace("/dashboard");
         return;
       }
 
+      setCurrentProfile(me as Profile);
+      setLoadingMe(false);
+
       await loadSpecialties();
-      await loadItems("approved", "all", "all");
+      await loadItems(statusFilter, bloomFilter, specialtyFilter);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -95,32 +99,31 @@ export default function AdminBlueprintsPage() {
       .order("name", { ascending: true });
 
     if (!error && data) {
-      setSpecialties(data);
+      setSpecialties(data as Specialty[]);
     }
   }
 
-  async function loadItems(
-    status: string,
-    bloom: string,
-    specId: string
-  ) {
+  async function loadItems(status: string, bloom: string, specId: string) {
     setLoadingData(true);
 
     let query = supabase
       .from("mcq_items")
       .select("id, stem, bloom_level, learner_level, status, specialty_id");
 
-    if (status !== "all") {
-      query = query.eq("status", status);
-    }
-    if (bloom !== "all") {
-      query = query.eq("bloom_level", bloom);
-    }
-    if (specId !== "all") {
-      query = query.eq("specialty_id", specId);
-    }
+    // status
+    if (status !== "all") query = query.eq("status", status);
+    else query = query.not("status", "is", null);
+
+    // bloom
+    if (bloom === "none") query = query.is("bloom_level", null);
+    else if (bloom !== "all") query = query.eq("bloom_level", bloom);
+
+    // specialty
+    if (specId === "none") query = query.is("specialty_id", null);
+    else if (specId !== "all") query = query.eq("specialty_id", specId);
 
     const { data, error } = await query;
+
     setLoadingData(false);
 
     if (error) {
@@ -133,15 +136,17 @@ export default function AdminBlueprintsPage() {
 
   const canShow = currentProfile && currentProfile.role === "admin";
 
-  // BLUEPRINT SUMMARY
+  // SUMMARY
   const totalItems = items.length;
   const totalApproved = items.filter((i) => i.status === "approved").length;
 
   const bloomCount = useMemo(() => {
     const m: Record<string, number> = {};
     for (const b of BLOOM_LEVELS) m[b] = 0;
+    m["none"] = 0;
+
     for (const it of items) {
-      const b = it.bloom_level || "none";
+      const b = it.bloom_level ?? "none";
       m[b] = (m[b] || 0) + 1;
     }
     return m;
@@ -150,7 +155,7 @@ export default function AdminBlueprintsPage() {
   const learnerCount = useMemo(() => {
     const m: Record<string, number> = {};
     for (const it of items) {
-      const lv = it.learner_level || "none";
+      const lv = it.learner_level ?? "none";
       m[lv] = (m[lv] || 0) + 1;
     }
     return m;
@@ -165,7 +170,7 @@ export default function AdminBlueprintsPage() {
   const blueprintBySpec = useMemo(() => {
     const m: Record<string, number> = {};
     for (const it of items) {
-      const id = it.specialty_id || "none";
+      const id = it.specialty_id ?? "none";
       m[id] = (m[id] || 0) + 1;
     }
     return m;
@@ -188,6 +193,10 @@ export default function AdminBlueprintsPage() {
     if (bloomFilter !== "all") params.set("bloom", bloomFilter);
     if (specialtyFilter !== "all") params.set("specialty_id", specialtyFilter);
 
+    // để export đúng "none"
+    if (bloomFilter === "none") params.set("bloom", "none");
+    if (specialtyFilter === "none") params.set("specialty_id", "none");
+
     const url = "/api/admin/items/export?" + params.toString();
     window.location.href = url;
   }
@@ -196,9 +205,7 @@ export default function AdminBlueprintsPage() {
     <div>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">
-            Blueprint & Export
-          </h1>
+          <h1 className="text-2xl font-bold">Blueprint & Export</h1>
           <p className="text-sm text-slate-500">
             Xem cấu trúc ngân hàng MCQ theo Bloom / bậc học / chuyên ngành và
             xuất danh sách câu hỏi ra CSV theo blueprint.
@@ -217,9 +224,7 @@ export default function AdminBlueprintsPage() {
       </div>
 
       {loadingMe && (
-        <div className="text-sm text-slate-500">
-          Đang kiểm tra quyền…
-        </div>
+        <div className="text-sm text-slate-500">Đang kiểm tra quyền…</div>
       )}
 
       {!loadingMe && !canShow && (
@@ -282,7 +287,7 @@ export default function AdminBlueprintsPage() {
 
             <button
               onClick={triggerExport}
-              disabled={loadingData || !items.length}
+              disabled={loadingData}
               className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
             >
               Xuất CSV ({items.length} câu)
@@ -299,17 +304,12 @@ export default function AdminBlueprintsPage() {
                 {totalItems}
               </div>
               <div className="text-xs text-slate-500 mt-1">
-                Approved:{" "}
-                <span className="font-semibold">
-                  {totalApproved}
-                </span>
+                Approved: <span className="font-semibold">{totalApproved}</span>
               </div>
             </div>
 
             <div className="border rounded-xl bg-white p-4">
-              <div className="text-xs text-slate-500 mb-1">
-                Phân bố theo Bloom
-              </div>
+              <div className="text-xs text-slate-500 mb-1">Phân bố theo Bloom</div>
               <ul className="text-xs space-y-1">
                 {BLOOM_LEVELS.map((b) => (
                   <li key={b}>
@@ -318,9 +318,7 @@ export default function AdminBlueprintsPage() {
                   </li>
                 ))}
                 <li>
-                  <span className="font-semibold">
-                    (Không ghi Bloom):
-                  </span>{" "}
+                  <span className="font-semibold">(Không ghi Bloom):</span>{" "}
                   {bloomCount["none"] || 0}
                 </li>
               </ul>
@@ -350,45 +348,34 @@ export default function AdminBlueprintsPage() {
                 Blueprint theo chuyên ngành (số câu)
               </h2>
             </div>
-            {loadingData && (
-              <div className="text-sm text-slate-500">
-                Đang tải dữ liệu...
-              </div>
-            )}
-            {!loadingData && (
+
+            {loadingData ? (
+              <div className="text-sm text-slate-500">Đang tải dữ liệu...</div>
+            ) : (
               <table className="w-full text-xs border">
                 <thead>
                   <tr className="bg-slate-100">
-                    <th className="border px-2 py-1 text-left">
-                      Chuyên ngành
-                    </th>
-                    <th className="border px-2 py-1 text-right">
-                      Số câu
-                    </th>
+                    <th className="border px-2 py-1 text-left">Chuyên ngành</th>
+                    <th className="border px-2 py-1 text-right">Số câu</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(blueprintBySpec).map(
-                    ([specId, count]) => {
-                      const spec = specMap[specId];
-                      const label =
-                        specId === "none"
-                          ? "(Chưa gán chuyên ngành)"
-                          : spec
-                          ? `${spec.code} – ${spec.name}`
-                          : `(ID: ${specId})`;
-                      return (
-                        <tr key={specId}>
-                          <td className="border px-2 py-1">
-                            {label}
-                          </td>
-                          <td className="border px-2 py-1 text-right">
-                            {count}
-                          </td>
-                        </tr>
-                      );
-                    }
-                  )}
+                  {Object.entries(blueprintBySpec).map(([specId, count]) => {
+                    const spec = specMap[specId];
+                    const label =
+                      specId === "none"
+                        ? "(Chưa gán chuyên ngành)"
+                        : spec
+                        ? `${spec.code} – ${spec.name}`
+                        : `(ID: ${specId})`;
+                    return (
+                      <tr key={specId}>
+                        <td className="border px-2 py-1">{label}</td>
+                        <td className="border px-2 py-1 text-right">{count}</td>
+                      </tr>
+                    );
+                  })}
+
                   {Object.keys(blueprintBySpec).length === 0 && (
                     <tr>
                       <td
