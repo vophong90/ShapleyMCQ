@@ -1,8 +1,9 @@
+// app/admin/users/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Profile = {
   id: string;
@@ -20,6 +21,7 @@ const PAGE_SIZE = 20;
 
 export default function AdminUsersPage() {
   const router = useRouter();
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
   const [loadingMe, setLoadingMe] = useState(true);
@@ -37,15 +39,24 @@ export default function AdminUsersPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(total / PAGE_SIZE)),
+    [total]
+  );
   const canShow = currentProfile && currentProfile.role === "admin";
 
+  /* =========================================================
+     CHECK LOGIN + ROLE
+  ========================================================= */
   useEffect(() => {
     (async () => {
       setLoadingMe(true);
-      const { data: { session } } = await supabase.auth.getSession();
 
-      if (!session) {
+      const { data, error: userErr } = await supabase.auth.getUser();
+      const user = data.user;
+
+      if (userErr || !user) {
+        setLoadingMe(false);
         router.replace("/login");
         return;
       }
@@ -53,7 +64,7 @@ export default function AdminUsersPage() {
       const { data: me, error } = await supabase
         .from("profiles")
         .select("id, email, name, role")
-        .eq("id", session.user.id)
+        .eq("id", user.id)
         .single();
 
       setLoadingMe(false);
@@ -76,6 +87,9 @@ export default function AdminUsersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* =========================================================
+     LOAD USERS
+  ========================================================= */
   async function loadUsers(opts: { q: string; page: number }) {
     const q = opts.q ?? "";
     const p = opts.page ?? 1;
@@ -110,8 +124,13 @@ export default function AdminUsersPage() {
     setTotal(count ?? 0);
   }
 
+  /* =========================================================
+     UI HELPERS
+  ========================================================= */
   function toggleSelect(id: string) {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   }
 
   function selectAllCurrentPage() {
@@ -125,8 +144,12 @@ export default function AdminUsersPage() {
     await loadUsers({ q: search, page: safe });
   }
 
+  /* =========================================================
+     ACTIONS
+  ========================================================= */
   async function changeRoleForUser(id: string, newRole: "admin" | "user") {
-    if (!window.confirm(`Đổi quyền user này thành "${ROLE_LABEL[newRole]}"?`)) return;
+    if (!window.confirm(`Đổi quyền user này thành "${ROLE_LABEL[newRole]}"?`))
+      return;
 
     setSavingRole(true);
     const res = await fetch("/api/admin/users/set-role", {
@@ -142,7 +165,9 @@ export default function AdminUsersPage() {
       return;
     }
 
-    setList((prev) => prev.map((u) => (u.id === id ? { ...u, role: newRole } : u)));
+    setList((prev) =>
+      prev.map((u) => (u.id === id ? { ...u, role: newRole } : u))
+    );
   }
 
   async function changeRoleBulk(newRole: "admin" | "user") {
@@ -150,7 +175,12 @@ export default function AdminUsersPage() {
       alert("Chưa chọn user nào.");
       return;
     }
-    if (!window.confirm(`Đổi quyền ${selectedIds.length} user thành "${ROLE_LABEL[newRole]}"?`)) return;
+    if (
+      !window.confirm(
+        `Đổi quyền ${selectedIds.length} user thành "${ROLE_LABEL[newRole]}"?`
+      )
+    )
+      return;
 
     setSavingRole(true);
     const res = await fetch("/api/admin/users/set-role", {
@@ -166,8 +196,11 @@ export default function AdminUsersPage() {
       return;
     }
 
-    // update UI optimistic theo selectedIds
-    setList((prev) => prev.map((u) => (selectedIds.includes(u.id) ? { ...u, role: newRole } : u)));
+    setList((prev) =>
+      prev.map((u) =>
+        selectedIds.includes(u.id) ? { ...u, role: newRole } : u
+      )
+    );
     alert(`Đã đổi role: ${json.ok}/${json.total}`);
   }
 
@@ -200,8 +233,6 @@ export default function AdminUsersPage() {
     }
 
     alert(`Đã xóa: ${json.ok}/${json.total}`);
-
-    // reload current page (an toàn nhất)
     await loadUsers({ q: search, page });
   }
 
@@ -216,10 +247,14 @@ export default function AdminUsersPage() {
       return;
     }
 
-    if (!window.confirm(`Reset mật khẩu cho ${selectedIds.length} user về mật khẩu mặc định?`)) return;
+    if (
+      !window.confirm(
+        `Reset mật khẩu cho ${selectedIds.length} user về mật khẩu mặc định?`
+      )
+    )
+      return;
 
     setResetting(true);
-
     const res = await fetch("/api/admin/users/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -237,6 +272,9 @@ export default function AdminUsersPage() {
     alert(`Đã reset mật khẩu cho ${json.ok}/${json.total} tài khoản.`);
   }
 
+  /* =========================================================
+     RENDER
+  ========================================================= */
   return (
     <div>
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -250,16 +288,22 @@ export default function AdminUsersPage() {
         {currentProfile && (
           <div className="text-xs text-right text-slate-500">
             Đăng nhập:{" "}
-            <span className="font-semibold">{currentProfile.email || currentProfile.name}</span>{" "}
+            <span className="font-semibold">
+              {currentProfile.email || currentProfile.name}
+            </span>{" "}
             ({ROLE_LABEL[currentProfile.role] || currentProfile.role})
           </div>
         )}
       </div>
 
-      {loadingMe && <div className="text-sm text-slate-500">Đang kiểm tra quyền…</div>}
+      {loadingMe && (
+        <div className="text-sm text-slate-500">Đang kiểm tra quyền…</div>
+      )}
 
       {!loadingMe && !canShow && (
-        <div className="text-sm text-red-600">Bạn không có quyền truy cập trang Admin.</div>
+        <div className="text-sm text-red-600">
+          Bạn không có quyền truy cập trang Admin.
+        </div>
       )}
 
       {!loadingMe && canShow && (
@@ -311,7 +355,9 @@ export default function AdminUsersPage() {
                 disabled={resetting || selectedIds.length === 0}
                 className="px-3 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:opacity-50"
               >
-                {resetting ? "Đang reset..." : `Reset mật khẩu (${selectedIds.length})`}
+                {resetting
+                  ? "Đang reset..."
+                  : `Reset mật khẩu (${selectedIds.length})`}
               </button>
 
               <button
@@ -319,12 +365,14 @@ export default function AdminUsersPage() {
                 disabled={deleting || selectedIds.length === 0}
                 className="px-3 py-2 rounded-lg bg-rose-600 text-white text-sm hover:bg-rose-700 disabled:opacity-50"
               >
-                {deleting ? "Đang xóa..." : `Xóa user (${selectedIds.length})`}
+                {deleting
+                  ? "Đang xóa..."
+                  : `Xóa user (${selectedIds.length})`}
               </button>
             </div>
           </div>
 
-          {/* Pagination meta */}
+          {/* Pagination */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
             <div>
               Tổng: <span className="font-semibold">{total}</span> user • Trang{" "}
@@ -357,7 +405,9 @@ export default function AdminUsersPage() {
                   <th className="px-2 py-2 border-b text-center w-10">
                     <input
                       type="checkbox"
-                      checked={!!list.length && selectedIds.length === list.length}
+                      checked={
+                        !!list.length && selectedIds.length === list.length
+                      }
                       onChange={selectAllCurrentPage}
                     />
                   </th>
@@ -370,7 +420,10 @@ export default function AdminUsersPage() {
               <tbody>
                 {loadingList && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-3 text-slate-500 text-center">
+                    <td
+                      colSpan={5}
+                      className="px-3 py-3 text-slate-500 text-center"
+                    >
                       Đang tải danh sách...
                     </td>
                   </tr>
@@ -378,7 +431,10 @@ export default function AdminUsersPage() {
 
                 {!loadingList && list.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-3 text-slate-500 text-center">
+                    <td
+                      colSpan={5}
+                      className="px-3 py-3 text-slate-500 text-center"
+                    >
                       Chưa có user nào.
                     </td>
                   </tr>
@@ -400,7 +456,12 @@ export default function AdminUsersPage() {
                       <td className="px-2 py-2 border-t">
                         <select
                           value={u.role}
-                          onChange={(e) => changeRoleForUser(u.id, e.target.value as any)}
+                          onChange={(e) =>
+                            changeRoleForUser(
+                              u.id,
+                              e.target.value as "admin" | "user"
+                            )
+                          }
                           disabled={savingRole}
                           className="border rounded px-2 py-1 text-sm"
                         >
@@ -425,7 +486,8 @@ export default function AdminUsersPage() {
           </div>
 
           <p className="mt-3 text-xs text-slate-500">
-            ⚠️ Reset/xóa user dùng Supabase service role. Hãy giới hạn trang này cho admin.
+            ⚠️ Reset/xóa user dùng Supabase service role. Hãy giới hạn trang này
+            cho admin.
           </p>
         </>
       )}
