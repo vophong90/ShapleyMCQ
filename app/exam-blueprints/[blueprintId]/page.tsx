@@ -1,10 +1,10 @@
 // app/exam-blueprints/[blueprintId]/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 import {
   PieChart,
   Pie,
@@ -106,6 +106,9 @@ export default function ExamBlueprintDetailPage() {
   const [bloomStats, setBloomStats] = useState<BloomStat[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
 
+  // ✅ Dùng supabase-browser.ts
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
+
   // 1. Load blueprint
   useEffect(() => {
     async function loadData() {
@@ -158,7 +161,7 @@ export default function ExamBlueprintDetailPage() {
     if (blueprintId) {
       loadData();
     }
-  }, [blueprintId]);
+  }, [blueprintId, supabase]);
 
   async function handleGenerateExam() {
     if (!blueprint) return;
