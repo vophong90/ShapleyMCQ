@@ -266,7 +266,7 @@ export function useContextWizard() {
     }
 
     init();
-  }, [router, supabase]);
+  }, [router, supabase, loadExistingLlosByLesson]);
 
   // specialtyName
 
@@ -330,7 +330,7 @@ export function useContextWizard() {
     }
 
     syncExistingLlos();
-  }, [state.course_id, state.lesson_id, supabase]);
+  }, [state.course_id, state.lesson_id, supabase, loadExistingLlosByLesson]);
 
   // ===== Reload / Delete helpers =====
 
