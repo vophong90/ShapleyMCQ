@@ -568,8 +568,8 @@ export default function MCQWizard() {
 
   // ========== RENDER ==========
   return (
-    <div className="h-[calc(100vh-60px)] bg-gray-50 p-6 pb-24">
-      <div className="max-w-6xl mx-auto h-full flex flex-col gap-4 min-h-0">
+    <div className="h-[calc(100vh-60px)] bg-gray-50 p-6">
+      <div className="max-w-6xl mx-auto h-full flex flex-col gap-4 min-h-0 overflow-y-auto pb-[96px]">
         <MCQHeader context={context} />
 
         <SelectorBar
@@ -604,7 +604,7 @@ export default function MCQWizard() {
           selectedAU={selectedAU}
         />
 
-        <div className="grid grid-cols-1 md:grid-cols-[280px,1fr] gap-4 flex-1 overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-[280px,1fr] gap-4 flex-1 min-h-0">
           <MisconList
             selectedAU={selectedAU}
             miscons={miscons}
