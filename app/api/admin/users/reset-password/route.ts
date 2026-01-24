@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ✅ Check người gọi là admin
-    const supabase = getSupabaseServer();
+    const supabase = getRouteClient();
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
 
     if (userErr || !user) {
