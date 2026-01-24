@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-const OPENAI_ENDPOINT = "https://api.openai.com/v1/responses";
+const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
 type StemLength = "short" | "medium" | "long";
 type DifficultyLevel = "easy" | "medium" | "hard";
@@ -157,14 +157,7 @@ ${difficultyDesc}
       "correct_answer": "…",
       "distractors": ["...", "...", "..."],
       "explanation": "Giải thích tại sao đáp án đúng và tại sao các distractors sai."
-    },
-    {
-      "stem": "…",
-      "correct_answer": "…",
-      "distractors": ["...", "...", "..."],
-      "explanation": "…"
     }
-    ...
   ]
 }
 
@@ -172,8 +165,8 @@ ${difficultyDesc}
 - Không thêm text ngoài JSON.
 `.trim();
 
-    // ====== CALL 1: GPT GENERATE ======
-    const genRes = await fetch(OPENAI_ENDPOINT, {
+    // ====== CALL 1: GPT GENERATE (chat/completions) ======
+    const genRes = await fetch(OPENAI_CHAT_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -181,19 +174,25 @@ ${difficultyDesc}
       },
       body: JSON.stringify({
         model,
-        input: generatePrompt,
         response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Bạn là chuyên gia viết câu hỏi NBME/USMLE, CHỈ trả lời bằng JSON đúng schema yêu cầu.",
+          },
+          {
+            role: "user",
+            content: generatePrompt,
+          },
+        ],
       }),
     });
 
-    const genData = await genRes.json();
+    const genData = await genRes.json().catch(() => null);
 
-    const genText: string =
-      (genData as any).output_text ??
-      (genData as any).output?.[0]?.content?.[0]?.text ??
-      "";
-
-    if (!genRes.ok || !genText) {
+    if (!genRes.ok) {
+      console.error("OpenAI gen error /api/mcq-gen:", genData);
       return NextResponse.json(
         {
           error: "GPT không trả về nội dung MCQ ở bước generate.",
@@ -203,14 +202,27 @@ ${difficultyDesc}
       );
     }
 
+    const genContent = genData?.choices?.[0]?.message?.content;
+    if (!genContent || typeof genContent !== "string") {
+      console.error(
+        "Không có message.content hợp lệ ở bước generate /api/mcq-gen:",
+        genData
+      );
+      return NextResponse.json(
+        { error: "Không nhận được content hợp lệ từ GPT (generate)" },
+        { status: 500 }
+      );
+    }
+
     let genParsed: any;
     try {
-      genParsed = JSON.parse(genText);
+      genParsed = JSON.parse(genContent);
     } catch (err) {
+      console.error("JSON parse error (generate) /api/mcq-gen:", err, genContent);
       return NextResponse.json(
         {
           error: "JSON GPT (generate) trả về sai định dạng",
-          raw: genText,
+          raw: genContent,
         },
         { status: 500 }
       );
@@ -228,7 +240,6 @@ ${difficultyDesc}
       );
     }
 
-    // Cắt đúng 3 phần tử đầu
     genItems = genItems.slice(0, n);
 
     // ====== PROMPT 2: CRITIC / REVIEW & FIX ======
@@ -290,8 +301,7 @@ Hãy trả về JSON DUY NHẤT ở dạng:
 }
 `.trim();
 
-    // ====== CALL 2: GPT CRITIC ======
-    const criticRes = await fetch(OPENAI_ENDPOINT, {
+    const criticRes = await fetch(OPENAI_CHAT_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -299,19 +309,25 @@ Hãy trả về JSON DUY NHẤT ở dạng:
       },
       body: JSON.stringify({
         model,
-        input: criticPrompt,
         response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Bạn là chuyên gia thẩm định câu hỏi NBME/USMLE, CHỈ trả lời bằng JSON đúng schema yêu cầu.",
+          },
+          {
+            role: "user",
+            content: criticPrompt,
+          },
+        ],
       }),
     });
 
-    const criticData = await criticRes.json();
+    const criticData = await criticRes.json().catch(() => null);
 
-    const criticText: string =
-      (criticData as any).output_text ??
-      (criticData as any).output?.[0]?.content?.[0]?.text ??
-      "";
-
-    if (!criticRes.ok || !criticText) {
+    if (!criticRes.ok) {
+      console.error("OpenAI critic error /api/mcq-gen:", criticData);
       return NextResponse.json(
         {
           error: "GPT không trả về nội dung MCQ ở bước critic.",
@@ -321,14 +337,27 @@ Hãy trả về JSON DUY NHẤT ở dạng:
       );
     }
 
+    const criticContent = criticData?.choices?.[0]?.message?.content;
+    if (!criticContent || typeof criticContent !== "string") {
+      console.error(
+        "Không có message.content hợp lệ ở bước critic /api/mcq-gen:",
+        criticData
+      );
+      return NextResponse.json(
+        { error: "Không nhận được content hợp lệ từ GPT (critic)" },
+        { status: 500 }
+      );
+    }
+
     let criticParsed: any;
     try {
-      criticParsed = JSON.parse(criticText);
+      criticParsed = JSON.parse(criticContent);
     } catch (err) {
+      console.error("JSON parse error (critic) /api/mcq-gen:", err, criticContent);
       return NextResponse.json(
         {
           error: "JSON GPT (critic) trả về sai định dạng",
-          raw: criticText,
+          raw: criticContent,
         },
         { status: 500 }
       );
@@ -350,7 +379,6 @@ Hãy trả về JSON DUY NHẤT ở dạng:
       );
     }
 
-    // Đảm bảo chỉ trả tối đa n = 3 câu
     finalItems = finalItems.slice(0, n);
 
     return NextResponse.json(finalItems);
