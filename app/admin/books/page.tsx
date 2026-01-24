@@ -238,7 +238,6 @@ export default function AdminBooksPage() {
         objectName,
         token,
         anonKey,
-        contentType: initJson?.tusMetadata?.contentType || file.type || null,
         file,
         onProgress: (pct) =>
           setProgressMsg(`2/4 Đang upload file (resumable)... ${pct}%`),
