@@ -136,8 +136,7 @@ async function extractPptx(buffer: Buffer): Promise<string> {
 }
 
 /* =========================================
-   API: POST JSON { files: [{name, ext, data_base64}] }
-   (No multipart to avoid 413)
+   Types
 ========================================= */
 
 type InFile = {
@@ -146,14 +145,119 @@ type InFile = {
   data_base64: string; // base64 or data:url
 };
 
+type UrlPayload = {
+  file_url?: string;
+  name?: string;
+  ext?: string;
+};
+
+/* =========================================
+   API
+========================================= */
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
+
+    // ===== MODE 1: ingest dùng file_url (ưu tiên nếu có) =====
+    if (body?.file_url) {
+      const { file_url, name: rawName, ext: rawExt } = body as UrlPayload;
+      const name = (rawName || "unknown").toString();
+      const ext = normalizeExt(name, rawExt);
+
+      const unsupported: { name: string; reason: string }[] = [];
+
+      if (!file_url || typeof file_url !== "string") {
+        return NextResponse.json(
+          { error: "file_url không hợp lệ", unsupported },
+          { status: 400 }
+        );
+      }
+
+      // tải file từ signed URL
+      const res = await fetch(file_url);
+      if (!res.ok) {
+        return NextResponse.json(
+          {
+            error: "Không tải được file từ file_url",
+            detail: `HTTP ${res.status}`,
+          },
+          { status: 400 }
+        );
+      }
+
+      const arrayBuf = await res.arrayBuffer();
+      const buf = Buffer.from(arrayBuf);
+
+      if (!buf || buf.length === 0) {
+        return NextResponse.json(
+          {
+            error: "File rỗng hoặc tải thất bại từ file_url.",
+          },
+          { status: 400 }
+        );
+      }
+
+      try {
+        let text = "";
+
+        if (ext === "txt") {
+          text = await extractTxtFromBuffer(buf);
+        } else if (ext === "pdf") {
+          text = await extractPdf(buf);
+        } else if (ext === "docx") {
+          text = await extractDocx(buf);
+        } else if (ext === "pptx") {
+          text = await extractPptx(buf);
+        } else {
+          unsupported.push({
+            name,
+            reason:
+              "Định dạng chưa hỗ trợ. Dùng .pdf, .docx, .pptx hoặc .txt",
+          });
+        }
+
+        text = cleanTextBlock(text);
+
+        if (!text) {
+          return NextResponse.json(
+            {
+              error:
+                "Không trích xuất được nội dung (có thể file scan/ảnh).",
+              unsupported,
+            },
+            { status: 500 }
+          );
+        }
+
+        return NextResponse.json(
+          {
+            text,
+            unsupported,
+          },
+          { status: 200 }
+        );
+      } catch (e: any) {
+        console.error("Lỗi parse file từ file_url:", e);
+        return NextResponse.json(
+          {
+            error: "Lỗi khi trích xuất nội dung file.",
+            detail: String(e?.message || e),
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    // ===== MODE 2: interface cũ { files: [{ name, ext?, data_base64 }] } =====
     const files: InFile[] = Array.isArray(body?.files) ? body.files : [];
 
     if (!files.length) {
       return NextResponse.json(
-        { error: "Thiếu files[]. Gửi JSON { files: [{name, ext?, data_base64}] }" },
+        {
+          error:
+            "Thiếu files[]. Gửi JSON { files: [{name, ext?, data_base64}] } hoặc { file_url, name, ext }",
+        },
         { status: 400 }
       );
     }
@@ -180,7 +284,10 @@ export async function POST(req: NextRequest) {
       }
 
       if (!buf || buf.length === 0) {
-        unsupported.push({ name, reason: "Nội dung rỗng hoặc decode base64 thất bại." });
+        unsupported.push({
+          name,
+          reason: "Nội dung rỗng hoặc decode base64 thất bại.",
+        });
         continue;
       }
 
@@ -198,19 +305,28 @@ export async function POST(req: NextRequest) {
         } else {
           unsupported.push({
             name,
-            reason: "Định dạng chưa hỗ trợ. Dùng .pdf, .docx, .pptx hoặc .txt",
+            reason:
+              "Định dạng chưa hỗ trợ. Dùng .pdf, .docx, .pptx hoặc .txt",
           });
           continue;
         }
 
         text = cleanTextBlock(text);
-        if (text) texts.push(`===== FILE: ${name} =====\n${text}`);
+        if (text)
+          texts.push(`===== FILE: ${name} =====\n${text}`);
         else {
-          unsupported.push({ name, reason: "Trích xuất được nhưng không có text (có thể là file scan/ảnh)." });
+          unsupported.push({
+            name,
+            reason:
+              "Trích xuất được nhưng không có text (có thể là file scan/ảnh).",
+          });
         }
       } catch (e: any) {
         console.error(`Lỗi parse file ${name}:`, e);
-        unsupported.push({ name, reason: "Lỗi khi trích xuất nội dung file." });
+        unsupported.push({
+          name,
+          reason: "Lỗi khi trích xuất nội dung file.",
+        });
       }
     }
 
