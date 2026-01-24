@@ -28,7 +28,7 @@ type Body = {
 export async function POST(req: NextRequest) {
   try {
     // Client dùng cookie session để xác định user gọi API
-    const supabase = getRouteClient(req);
+    const supabase = getRouteClient();
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
     if (authErr || !authData?.user) {
