@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 import {
@@ -94,6 +94,7 @@ function BloomDonutChart({ data }: { data: BloomStat[] }) {
 
 export default function ExamBlueprintDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const blueprintId = params?.blueprintId as string;
 
   const [loading, setLoading] = useState(true);
@@ -158,9 +159,7 @@ export default function ExamBlueprintDetailPage() {
       }
     }
 
-    if (blueprintId) {
-      loadData();
-    }
+    if (blueprintId) loadData();
   }, [blueprintId, supabase]);
 
   async function handleGenerateExam() {
@@ -261,6 +260,16 @@ export default function ExamBlueprintDetailPage() {
             >
               Cấu hình Blueprint
             </Link>
+
+            {/* ✅ Nút xem đề (chỉ hiện khi đã có examId) */}
+            {examId && (
+              <button
+                onClick={() => router.push(`/exams/${examId}`)}
+                className="px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Xem đề
+              </button>
+            )}
 
             {/* Nút tạo đề */}
             <button
