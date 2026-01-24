@@ -1,3 +1,4 @@
+// app/api/dashboard/stats/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -12,6 +13,23 @@ const BLOOM_LEVELS = [
   "Evaluate",
   "Create",
 ];
+
+function buildSparkline7(
+  today: Date,
+  rows: { created_at: string }[] | null | undefined
+) {
+  const out: { date: string; value: number }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today.getTime() - (6 - i) * 86400000);
+    const dateStr = d.toISOString().substring(0, 10);
+    const value =
+      (rows || []).filter(
+        (x) => x.created_at.substring(0, 10) === dateStr
+      ).length || 0;
+    out.push({ date: dateStr, value });
+  }
+  return out;
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -28,7 +46,7 @@ export async function GET(req: NextRequest) {
     }
 
     // =========================
-    // 1) COUNT KPI
+    // 1) KPI COUNTS
     // =========================
     const [
       { count: courseCount },
@@ -38,57 +56,59 @@ export async function GET(req: NextRequest) {
       { count: misCount },
       { count: mcqCount },
     ] = await Promise.all([
-      supabase
-        .from("courses")
-        .select("*", { count: "exact", head: true })
-        .eq("owner_id", userId),
-      supabase
-        .from("lessons")
-        .select("*", { count: "exact", head: true })
-        .eq("owner_id", userId),
-      supabase
-        .from("llos")
-        .select("*", { count: "exact", head: true })
-        .eq("owner_id", userId),
-      supabase
-        .from("assessment_units")
-        .select("*", { count: "exact", head: true })
-        .eq("owner_id", userId),
-      supabase
-        .from("misconceptions")
-        .select("*", { count: "exact", head: true })
-        .eq("owner_id", userId),
-      supabase
-        .from("mcq_items")
-        .select("*", { count: "exact", head: true })
-        .eq("owner_id", userId),
+      supabase.from("courses").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("lessons").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("llos").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("assessment_units").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("misconceptions").select("*", { count: "exact", head: true }).eq("owner_id", userId),
+      supabase.from("mcq_items").select("*", { count: "exact", head: true }).eq("owner_id", userId),
     ]);
 
     // =========================
-    // 2) SPARKLINE MCQ (7 ngày)
+    // 2) SPARKLINE DATA (7 ngày)
     // =========================
     const today = new Date();
     const past7 = new Date(Date.now() - 6 * 86400000);
 
-    const { data: mcqLast7 } = await supabase
-      .from("mcq_items")
-      .select("id, created_at")
-      .eq("owner_id", userId)
-      .gte("created_at", past7.toISOString())
-      .order("created_at", { ascending: true });
+    const [
+      { data: mcqLast7 },
+      { data: courseLast7 },
+      { data: lessonLast7 },
+      { data: misLast7 },
+    ] = await Promise.all([
+      supabase
+        .from("mcq_items")
+        .select("id, created_at")
+        .eq("owner_id", userId)
+        .gte("created_at", past7.toISOString())
+        .order("created_at", { ascending: true }),
 
-    const sparklineMcq: { date: string; value: number }[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(today.getTime() - (6 - i) * 86400000);
-      const dateStr = d.toISOString().substring(0, 10);
+      supabase
+        .from("courses")
+        .select("id, created_at")
+        .eq("owner_id", userId)
+        .gte("created_at", past7.toISOString())
+        .order("created_at", { ascending: true }),
 
-      const count =
-        (mcqLast7 || []).filter(
-          (x) => x.created_at.substring(0, 10) === dateStr
-        ).length || 0;
+      supabase
+        .from("lessons")
+        .select("id, created_at")
+        .eq("owner_id", userId)
+        .gte("created_at", past7.toISOString())
+        .order("created_at", { ascending: true }),
 
-      sparklineMcq.push({ date: dateStr, value: count });
-    }
+      supabase
+        .from("misconceptions")
+        .select("id, created_at")
+        .eq("owner_id", userId)
+        .gte("created_at", past7.toISOString())
+        .order("created_at", { ascending: true }),
+    ]);
+
+    const sparklineMcq = buildSparkline7(today, mcqLast7);
+    const sparklineCourses = buildSparkline7(today, courseLast7);
+    const sparklineLessons = buildSparkline7(today, lessonLast7);
+    const sparklineMis = buildSparkline7(today, misLast7);
 
     // =========================
     // 3) BLOOM LLO (llos.bloom_suggested)
@@ -111,9 +131,7 @@ export async function GET(req: NextRequest) {
     const totalLlo = bloomRawLlo?.length ?? 0;
     const knownLlo = bloomCountLlo.reduce((s, x) => s + x.value, 0);
     const othersLlo = totalLlo - knownLlo;
-    if (othersLlo > 0) {
-      bloomCountLlo.push({ name: "Khác / Chưa gán", value: othersLlo });
-    }
+    if (othersLlo > 0) bloomCountLlo.push({ name: "Khác / Chưa gán", value: othersLlo });
 
     // =========================
     // 4) BLOOM AU (assessment_units.bloom_min)
@@ -136,9 +154,7 @@ export async function GET(req: NextRequest) {
     const totalAu = bloomRawAu?.length ?? 0;
     const knownAu = bloomCountAu.reduce((s, x) => s + x.value, 0);
     const othersAu = totalAu - knownAu;
-    if (othersAu > 0) {
-      bloomCountAu.push({ name: "Khác / Chưa gán", value: othersAu });
-    }
+    if (othersAu > 0) bloomCountAu.push({ name: "Khác / Chưa gán", value: othersAu });
 
     // =========================
     // 5) BLOOM MCQ (mcq_items.bloom_level)
@@ -161,15 +177,14 @@ export async function GET(req: NextRequest) {
     const totalMcq = bloomRawMcq?.length ?? 0;
     const knownMcq = bloomCountMcq.reduce((s, x) => s + x.value, 0);
     const othersMcq = totalMcq - knownMcq;
-    if (othersMcq > 0) {
-      bloomCountMcq.push({ name: "Khác / Chưa gán", value: othersMcq });
-    }
+    if (othersMcq > 0) bloomCountMcq.push({ name: "Khác / Chưa gán", value: othersMcq });
 
     // =========================
     // 6) RESPONSE
     // =========================
     return NextResponse.json({
       ok: true,
+
       courseCount: courseCount ?? 0,
       lessonCount: lessonCount ?? 0,
       lloCount: lloCount ?? 0,
@@ -180,7 +195,11 @@ export async function GET(req: NextRequest) {
       bloomLlo: bloomCountLlo,
       bloomAu: bloomCountAu,
       bloomMcq: bloomCountMcq,
+
       sparklineMcq,
+      sparklineCourses,
+      sparklineLessons,
+      sparklineMis,
     });
   } catch (err) {
     console.error("Error /api/dashboard/stats:", err);
