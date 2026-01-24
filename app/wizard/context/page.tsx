@@ -36,6 +36,7 @@ type ContextState = {
 type LloLine = {
   id?: string; // để sau này nếu cần map với Supabase
   text: string;
+  bloom_suggested?: string | null; // Bloom riêng cho từng LLO (advanced mode)
 };
 
 const LEARNER_LEVELS = [
@@ -66,6 +67,17 @@ type LloEvalResult = {
   items: LloEvalItem[];
 };
 
+// Row của VIEW v_llos_with_counts
+type ExistingLloRow = {
+  id: string;
+  text: string;
+  bloom_suggested: string | null;
+  level_suggested: string | null;
+  au_count: number;
+  mis_count: number;
+  mcq_count: number;
+};
+
 export default function ContextWizardPage() {
   const router = useRouter();
 
@@ -86,8 +98,18 @@ export default function ContextWizardPage() {
     llos_text: "",
   });
 
-  // Danh sách LLO để nhập từng dòng + thêm/xóa
+  // Danh sách LLO để nhập từng dòng + thêm/xóa (LLO mới chưa save)
   const [lloList, setLloList] = useState<LloLine[]>([{ text: "" }]);
+
+  // ✅ Advanced mode: chọn Bloom riêng cho từng LLO
+  const [advancedBloomPerLlo, setAdvancedBloomPerLlo] = useState(false);
+
+  // LLO đã lưu trong DB cho Bài học hiện tại
+  const [existingLlos, setExistingLlos] = useState<ExistingLloRow[]>([]);
+  const [loadingExistingLlos, setLoadingExistingLlos] = useState(false);
+  const [editingLloId, setEditingLloId] = useState<string | null>(null);
+  const [editLloText, setEditLloText] = useState("");
+  const [editLloBloom, setEditLloBloom] = useState<string | "">("");
 
   // Tạo mới học phần / bài học
   const [newCourseTitle, setNewCourseTitle] = useState("");
@@ -108,157 +130,7 @@ export default function ContextWizardPage() {
   const [evalLoading, setEvalLoading] = useState(false);
   const [evalError, setEvalError] = useState<string | null>(null);
 
-  // ====== INIT: kiểm tra login, load specialties, courses, context ======
-  useEffect(() => {
-    async function init() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push("/login");
-        return;
-      }
-
-      // Load profile (để gợi ý specialty)
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, specialty_id")
-        .eq("id", session.user.id)
-        .single();
-
-      if (profileError) {
-        console.error("Error loading profile:", profileError);
-      }
-
-      // Load specialties
-      const { data: specs, error: specsError } = await supabase
-        .from("specialties")
-        .select("id, code, name")
-        .order("name", { ascending: true });
-
-      if (specsError) {
-        console.error("Error loading specialties:", specsError);
-        setMsg("Không tải được danh sách chuyên ngành.");
-      } else if (specs) {
-        setSpecialties(specs);
-      }
-
-      // Load courses của user
-      const { data: courseData, error: courseError } = await supabase
-        .from("courses")
-        .select("id, code, title")
-        .eq("owner_id", session.user.id)
-        .order("title", { ascending: true });
-
-      if (courseError) {
-        console.error("Error loading courses:", courseError);
-      } else if (courseData) {
-        setCourses(courseData);
-      }
-
-      // Load context từ localStorage nếu có
-      if (typeof window !== "undefined") {
-        const saved = window.localStorage.getItem("shapleymcq_context");
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved) as ContextState;
-            setState((prev) => ({
-              ...prev,
-              ...parsed,
-            }));
-
-            // LLO list từ llos_text cũ (nếu có)
-            if (parsed.llos_text) {
-              const lines = parsed.llos_text
-                .split("\n")
-                .map((line) => line.trim())
-                .filter((line) => line.length > 0);
-
-              if (lines.length > 0) {
-                setLloList(lines.map((t) => ({ text: t })));
-              } else {
-                setLloList([{ text: "" }]);
-              }
-            } else {
-              setLloList([{ text: "" }]);
-            }
-
-            // Nếu có course_id thì load lessons
-            if (parsed.course_id) {
-              const { data: lessonData, error: lessonError } = await supabase
-                .from("lessons")
-                .select("id, title, course_id")
-                .eq("owner_id", session.user.id)
-                .eq("course_id", parsed.course_id)
-                .order("order_in_course", { ascending: true });
-
-              if (lessonError) {
-                console.error("Error loading lessons:", lessonError);
-              } else if (lessonData) {
-                setLessons(lessonData);
-              }
-            }
-          } catch (e) {
-            console.error("Parse shapleymcq_context error:", e);
-            setLloList([{ text: "" }]);
-          }
-        } else if (profile?.specialty_id) {
-          setState((prev) => ({
-            ...prev,
-            specialty_id: profile.specialty_id,
-          }));
-          setLloList([{ text: "" }]);
-        } else {
-          setLloList([{ text: "" }]);
-        }
-      }
-
-      setLoading(false);
-    }
-
-    init();
-  }, [router]);
-
-  // Cập nhật specialtyName mỗi khi state.specialty_id hoặc specialties thay đổi
-  useEffect(() => {
-    if (!state.specialty_id || specialties.length === 0) return;
-    const spec = specialties.find((s) => s.id === state.specialty_id);
-    setSpecialtyName(spec?.name);
-  }, [state.specialty_id, specialties]);
-
-  // Khi đổi course_id, load lại lessons
-  useEffect(() => {
-    async function loadLessonsForCourse() {
-      if (!state.course_id) {
-        setLessons([]);
-        return;
-      }
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const { data, error } = await supabase
-        .from("lessons")
-        .select("id, title, course_id")
-        .eq("owner_id", session.user.id)
-        .eq("course_id", state.course_id)
-        .order("order_in_course", { ascending: true });
-
-      if (error) {
-        console.error("Error loading lessons:", error);
-        setLessons([]);
-      } else if (data) {
-        setLessons(data);
-      }
-    }
-
-    loadLessonsForCourse();
-  }, [state.course_id]);
-
-  // ====== Helpers ======
+  // ====== Helpers chung ======
 
   function handleChange<K extends keyof ContextState>(
     key: K,
@@ -271,10 +143,19 @@ export default function ContextWizardPage() {
     }));
   }
 
-  function getCleanLloLines(): string[] {
+  // Trả về các LLO mới (trim text, bỏ rỗng) kèm bloom_suggested nếu có
+  function getCleanLloObjects(): LloLine[] {
     return lloList
-      .map((l) => l.text.trim())
-      .filter((line) => line.length > 0);
+      .map((l) => ({
+        ...l,
+        text: l.text.trim(),
+      }))
+      .filter((l) => l.text.length > 0);
+  }
+
+  // Trả về chỉ text từng LLO (dùng cho evaluate + localStorage)
+  function getCleanLloLines(): string[] {
+    return getCleanLloObjects().map((l) => l.text);
   }
 
   function validate(): boolean {
@@ -368,6 +249,222 @@ export default function ContextWizardPage() {
     }
   }
 
+  // ====== LOAD: LLO đã có cho Bài học hiện tại ======
+
+  async function loadExistingLlosByLesson(
+    ownerId: string,
+    courseId?: string | null,
+    lessonId?: string | null
+  ) {
+    if (!courseId || !lessonId) {
+      setExistingLlos([]);
+      return;
+    }
+
+    setLoadingExistingLlos(true);
+
+    const { data, error } = await supabase
+      .from("v_llos_with_counts")
+      .select(
+        "id, text, bloom_suggested, level_suggested, au_count, mis_count, mcq_count"
+      )
+      .eq("owner_id", ownerId)
+      .eq("course_id", courseId)
+      .eq("lesson_id", lessonId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Error loading existing LLOs:", error);
+      setExistingLlos([]);
+    } else {
+      setExistingLlos(data || []);
+    }
+
+    setLoadingExistingLlos(false);
+  }
+
+  // ====== INIT: kiểm tra login, load specialties, courses, context ======
+  useEffect(() => {
+    async function init() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        router.push("/login");
+        return;
+      }
+
+      // Load profile (để gợi ý specialty)
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, specialty_id")
+        .eq("id", session.user.id)
+        .single();
+
+      if (profileError) {
+        console.error("Error loading profile:", profileError);
+      }
+
+      // Load specialties
+      const { data: specs, error: specsError } = await supabase
+        .from("specialties")
+        .select("id, code, name")
+        .order("name", { ascending: true });
+
+      if (specsError) {
+        console.error("Error loading specialties:", specsError);
+        setMsg("Không tải được danh sách chuyên ngành.");
+      } else if (specs) {
+        setSpecialties(specs);
+      }
+
+      // Load courses của user
+      const { data: courseData, error: courseError } = await supabase
+        .from("courses")
+        .select("id, code, title")
+        .eq("owner_id", session.user.id)
+        .order("title", { ascending: true });
+
+      if (courseError) {
+        console.error("Error loading courses:", courseError);
+      } else if (courseData) {
+        setCourses(courseData);
+      }
+
+      // Load context từ localStorage nếu có
+      if (typeof window !== "undefined") {
+        const saved = window.localStorage.getItem("shapleymcq_context");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved) as ContextState;
+            setState((prev) => ({
+              ...prev,
+              ...parsed,
+            }));
+
+            // LLO list từ llos_text cũ (nếu có) – chỉ text, Bloom sẽ dùng global/advanced sau
+            if (parsed.llos_text) {
+              const lines = parsed.llos_text
+                .split("\n")
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+              if (lines.length > 0) {
+                setLloList(lines.map((t) => ({ text: t })));
+              } else {
+                setLloList([{ text: "" }]);
+              }
+            } else {
+              setLloList([{ text: "" }]);
+            }
+
+            // Nếu có course_id thì load lessons
+            if (parsed.course_id) {
+              const { data: lessonData, error: lessonError } = await supabase
+                .from("lessons")
+                .select("id, title, course_id")
+                .eq("owner_id", session.user.id)
+                .eq("course_id", parsed.course_id)
+                .order("order_in_course", { ascending: true });
+
+              if (lessonError) {
+                console.error("Error loading lessons:", lessonError);
+              } else if (lessonData) {
+                setLessons(lessonData);
+              }
+            }
+
+            // Nếu có cả course & lesson thì load luôn LLO đã lưu
+            if (parsed.course_id && parsed.lesson_id) {
+              await loadExistingLlosByLesson(
+                session.user.id,
+                parsed.course_id,
+                parsed.lesson_id
+              );
+            }
+          } catch (e) {
+            console.error("Parse shapleymcq_context error:", e);
+            setLloList([{ text: "" }]);
+          }
+        } else if (profile?.specialty_id) {
+          setState((prev) => ({
+            ...prev,
+            specialty_id: profile.specialty_id,
+          }));
+          setLloList([{ text: "" }]);
+        } else {
+          setLloList([{ text: "" }]);
+        }
+      }
+
+      setLoading(false);
+    }
+
+    init();
+  }, [router]);
+
+  // Cập nhật specialtyName mỗi khi state.specialty_id hoặc specialties thay đổi
+  useEffect(() => {
+    if (!state.specialty_id || specialties.length === 0) return;
+    const spec = specialties.find((s) => s.id === state.specialty_id);
+    setSpecialtyName(spec?.name);
+  }, [state.specialty_id, specialties]);
+
+  // Khi đổi course_id, load lại lessons
+  useEffect(() => {
+    async function loadLessonsForCourse() {
+      if (!state.course_id) {
+        setLessons([]);
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const { data, error } = await supabase
+        .from("lessons")
+        .select("id, title, course_id")
+        .eq("owner_id", session.user.id)
+        .eq("course_id", state.course_id)
+        .order("order_in_course", { ascending: true });
+
+      if (error) {
+        console.error("Error loading lessons:", error);
+        setLessons([]);
+      } else if (data) {
+        setLessons(data);
+      }
+    }
+
+    loadLessonsForCourse();
+  }, [state.course_id]);
+
+  // Khi đổi course_id hoặc lesson_id, load lại LLO đã có
+  useEffect(() => {
+    async function syncExistingLlos() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+
+      if (!state.course_id || !state.lesson_id) {
+        setExistingLlos([]);
+        return;
+      }
+
+      await loadExistingLlosByLesson(
+        session.user.id,
+        state.course_id,
+        state.lesson_id
+      );
+    }
+
+    syncExistingLlos();
+  }, [state.course_id, state.lesson_id]);
+
   // ====== Reload / Delete helpers ======
 
   async function reloadCourses() {
@@ -440,6 +537,7 @@ export default function ContextWizardPage() {
       handleChange("course_id", "");
       handleChange("lesson_id", "");
       setLessons([]);
+      setExistingLlos([]);
     }
 
     setSavedOk(false);
@@ -475,10 +573,105 @@ export default function ContextWizardPage() {
 
     if (state.lesson_id === lessonId) {
       handleChange("lesson_id", "");
+      setExistingLlos([]);
     }
 
     setSavedOk(false);
     setMsg("Đã xóa Bài học.");
+  }
+
+  // ====== Update / Delete LLO đã có (DB) ======
+
+  async function handleSaveEditLlo(lloId: string) {
+    setMsg(null);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const payload: any = {
+      text: editLloText.trim(),
+    };
+
+    if (editLloBloom) {
+      payload.bloom_suggested = editLloBloom;
+    } else {
+      payload.bloom_suggested = null;
+    }
+
+    const { error } = await supabase
+      .from("llos")
+      .update(payload)
+      .eq("id", lloId)
+      .eq("owner_id", session.user.id);
+
+    if (error) {
+      console.error("update llo error:", error);
+      setMsg("Không cập nhật được LLO.");
+      return;
+    }
+
+    setEditingLloId(null);
+    setEditLloText("");
+    setEditLloBloom("");
+
+    if (state.course_id && state.lesson_id) {
+      await loadExistingLlosByLesson(
+        session.user.id,
+        state.course_id,
+        state.lesson_id
+      );
+    }
+
+    setMsg("Đã cập nhật LLO.");
+  }
+
+  function handleCancelEditLlo() {
+    setEditingLloId(null);
+    setEditLloText("");
+    setEditLloBloom("");
+  }
+
+  async function handleDeleteExistingLlo(lloId: string, textPreview: string) {
+    setMsg(null);
+
+    const ok = window.confirm(
+      `Xóa LLO này?\n\n"${textPreview.slice(
+        0,
+        120
+      )}${textPreview.length > 120 ? "…" : ""}"\n\nTẤT CẢ AU / Mis / MCQ liên quan sẽ bị xóa theo (ON DELETE CASCADE).`
+    );
+    if (!ok) return;
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const { error } = await supabase
+      .from("llos")
+      .delete()
+      .eq("id", lloId)
+      .eq("owner_id", session.user.id);
+
+    if (error) {
+      console.error("delete llo error:", error);
+      setMsg("Không xóa được LLO (kiểm tra log).");
+      return;
+    }
+
+    if (state.course_id && state.lesson_id) {
+      await loadExistingLlosByLesson(
+        session.user.id,
+        state.course_id,
+        state.lesson_id
+      );
+    } else {
+      setExistingLlos((prev) => prev.filter((l) => l.id !== lloId));
+    }
+
+    setMsg("Đã xóa LLO cùng AU/Mis/MCQ liên quan.");
   }
 
   // ====== SAVE: tạo course/lesson nếu cần, lưu LLO, lưu context ======
@@ -502,7 +695,8 @@ export default function ContextWizardPage() {
       return;
     }
 
-    const lloLines = getCleanLloLines();
+    const cleanLlos = getCleanLloObjects();
+    const lloTexts = cleanLlos.map((l) => l.text);
 
     try {
       // 1) Course
@@ -568,19 +762,23 @@ export default function ContextWizardPage() {
       }
 
       // 3) LLOs
-      if (lloLines.length === 0) {
+      if (cleanLlos.length === 0) {
         setMsg("Không có LLO hợp lệ để lưu.");
         setSaving(false);
         return;
       }
 
-      const insertRows = lloLines.map((text) => ({
+      const insertRows = cleanLlos.map((l) => ({
         owner_id: session.user.id,
         course_id: courseId,
         lesson_id: lessonId,
-        text,
-        bloom_suggested: state.bloom_level,
-        level_suggested: state.learner_level,
+        text: l.text,
+        // Nếu advanced mode: lấy Bloom riêng cho từng LLO, fallback về Bloom toàn bài
+        // Nếu không: dùng Bloom toàn bài cho tất cả
+        bloom_suggested: advancedBloomPerLlo
+          ? l.bloom_suggested || state.bloom_level || null
+          : state.bloom_level || null,
+        level_suggested: state.learner_level || null,
       }));
 
       const { error: lloError } = await supabase.from("llos").insert(insertRows);
@@ -592,9 +790,16 @@ export default function ContextWizardPage() {
         return;
       }
 
-      // 4) Lưu context vào localStorage
+      // Sau khi insert, load lại LLO đã có cho bài học
+      await loadExistingLlosByLesson(
+        session.user.id,
+        courseId,
+        lessonId || undefined
+      );
+
+      // 4) Lưu context vào localStorage (chỉ lưu text LLO, không lưu Bloom per LLO – Bloom đã nằm trong DB)
       if (typeof window !== "undefined") {
-        const llos_text_str = lloLines.join("\n");
+        const llos_text_str = lloTexts.join("\n");
         const contextToSave: ContextState = {
           specialty_id: state.specialty_id,
           learner_level: state.learner_level,
@@ -684,7 +889,7 @@ export default function ContextWizardPage() {
     );
   }
 
-  const cleanLloCount = getCleanLloLines().length;
+  const cleanLloCount = getCleanLloObjects().length;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 pb-24 space-y-6">
@@ -693,8 +898,9 @@ export default function ContextWizardPage() {
           Bước 1 – Thiết lập bối cảnh câu hỏi
         </h1>
         <p className="text-sm text-slate-600">
-          Chọn chuyên ngành, Học phần, Bài học, bậc đào tạo, mức Bloom và LLO của
-          bài cần ra câu hỏi. Sau đó dùng GPT để đánh giá sự phù hợp của LLO.
+          Chọn chuyên ngành, Học phần, Bài học, bậc đào tạo, mức Bloom và LLO
+          của bài cần ra câu hỏi. Sau đó dùng GPT để đánh giá sự phù hợp của
+          LLO.
         </p>
       </div>
 
@@ -753,7 +959,7 @@ export default function ContextWizardPage() {
           {/* Bloom level */}
           <div className="md:col-span-2">
             <label className="block text-[13px] font-medium text-slate-700 mb-1">
-              Mức Bloom mục tiêu
+              Mức Bloom mục tiêu (cho bộ câu hỏi)
             </label>
             <div className="flex flex-wrap gap-2 text-xs">
               {BLOOM_LEVELS.map((b) => (
@@ -776,6 +982,34 @@ export default function ContextWizardPage() {
               Đây là mức Bloom bạn muốn câu hỏi đạt được (ví dụ: Apply hoặc
               Analyze cho case lâm sàng).
             </p>
+
+            {/* Advanced mode: Bloom riêng cho từng LLO */}
+            <div className="mt-2 flex items-start gap-2">
+              <input
+                id="advanced-bloom-toggle"
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-brand-600"
+                checked={advancedBloomPerLlo}
+                onChange={(e) => {
+                  setAdvancedBloomPerLlo(e.target.checked);
+                  setSavedOk(false);
+                }}
+              />
+              <label
+                htmlFor="advanced-bloom-toggle"
+                className="text-[11px] text-slate-600"
+              >
+                <span className="font-medium">
+                  Bật chế độ nâng cao: chọn Bloom riêng cho từng LLO.
+                </span>
+                <br />
+                <span className="text-[11px] text-slate-500">
+                  Nếu không chọn, mọi LLO mới sẽ mặc định dùng mức Bloom mục
+                  tiêu ở trên. Khi bật, bạn có thể đặt Bloom riêng cho từng
+                  LLO, song global Bloom vẫn là mục tiêu chung của bộ câu hỏi.
+                </span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -824,6 +1058,7 @@ export default function ContextWizardPage() {
                         handleChange("course_id", "");
                         handleChange("lesson_id", "");
                         setLessons([]);
+                        setExistingLlos([]);
                       }}
                       className="text-[11px] text-brand-700 hover:underline"
                     >
@@ -974,6 +1209,7 @@ export default function ContextWizardPage() {
                         handleChange("course_id", c.id);
                         handleChange("lesson_id", "");
                         setSavedOk(false);
+                        setExistingLlos([]);
                       }}
                       className="text-left text-[12px] text-slate-700 hover:underline flex-1"
                       title="Chọn học phần này"
@@ -1060,11 +1296,11 @@ export default function ContextWizardPage() {
           </div>
         </div>
 
-        {/* Block 3: LLOs */}
+        {/* Block 3: LLOs mới */}
         <div>
           <div className="flex items-center justify-between mb-1">
             <label className="block text-[13px] font-medium text-slate-700">
-              LLOs của bài cần ra câu hỏi
+              LLOs của bài cần ra câu hỏi (LLO mới sẽ được lưu thêm)
             </label>
             <span className="text-[11px] text-slate-500">
               Tổng:{" "}
@@ -1077,36 +1313,78 @@ export default function ContextWizardPage() {
 
           <div className="space-y-2">
             {lloList.map((item, idx) => (
-              <div key={idx} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  className="flex-1 border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
-                  value={item.text}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setSavedOk(false);
-                    setLloList((prev) =>
-                      prev.map((row, i) =>
-                        i === idx ? { ...row, text: val } : row
-                      )
-                    );
-                  }}
-                  placeholder={`LLO ${idx + 1}`}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSavedOk(false);
-                    setLloList((prev) =>
-                      prev.length === 1
-                        ? [{ text: "" }]
-                        : prev.filter((_, i) => i !== idx)
-                    );
-                  }}
-                  className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 text-[11px] hover:bg-rose-100"
-                >
-                  Xóa
-                </button>
+              <div key={idx} className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    className="flex-1 border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+                    value={item.text}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSavedOk(false);
+                      setLloList((prev) =>
+                        prev.map((row, i) =>
+                          i === idx ? { ...row, text: val } : row
+                        )
+                      );
+                    }}
+                    placeholder={`LLO ${idx + 1}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSavedOk(false);
+                      setLloList((prev) =>
+                        prev.length === 1
+                          ? [{ text: "" }]
+                          : prev.filter((_, i) => i !== idx)
+                      );
+                    }}
+                    className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 text-[11px] hover:bg-rose-100"
+                  >
+                    Xóa
+                  </button>
+                </div>
+
+                {/* Bloom riêng cho từng LLO khi advanced mode bật */}
+                {advancedBloomPerLlo && (
+                  <div className="flex items-center gap-2 pl-1">
+                    <span className="text-[11px] text-slate-500">
+                      Bloom riêng cho LLO này:
+                    </span>
+                    <select
+                      className="text-[11px] border rounded-full px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+                      value={
+                        item.bloom_suggested ??
+                        state.bloom_level ??
+                        ""
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSavedOk(false);
+                        setLloList((prev) =>
+                          prev.map((row, i) =>
+                            i === idx
+                              ? {
+                                  ...row,
+                                  bloom_suggested: val || undefined,
+                                }
+                              : row
+                          )
+                        );
+                      }}
+                    >
+                      <option value="">
+                        = Dùng Bloom mục tiêu của bài học =
+                      </option>
+                      {BLOOM_LEVELS.map((b) => (
+                        <option key={b.value} value={b.value}>
+                          {b.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1115,7 +1393,10 @@ export default function ContextWizardPage() {
             type="button"
             onClick={() => {
               setSavedOk(false);
-              setLloList((prev) => [...prev, { text: "" }]);
+              setLloList((prev) => [
+                ...prev,
+                { text: "", bloom_suggested: state.bloom_level || undefined },
+              ]);
             }}
             className="mt-2 px-3 py-1.5 rounded-lg border border-dashed border-slate-300 text-[11px] text-slate-700 hover:border-brand-400 hover:text-brand-700"
           >
@@ -1124,7 +1405,8 @@ export default function ContextWizardPage() {
 
           <p className="mt-1 text-[11px] text-slate-500">
             Mỗi dòng là một LLO riêng. Các bước sau sẽ dùng danh sách này để GPT
-            đánh giá và sinh AU, misconceptions, MCQ.
+            đánh giá và sinh AU, misconceptions, MCQ. Nếu bật chế độ nâng cao,
+            bạn có thể đặt Bloom riêng cho từng LLO.
           </p>
         </div>
 
@@ -1156,6 +1438,142 @@ export default function ContextWizardPage() {
           </button>
         </div>
       </form>
+
+      {/* Block: LLO đã có của Bài học hiện tại */}
+      {state.course_id && state.lesson_id && (
+        <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                LLO đã có của Bài học này
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Các LLO đã lưu trong DB kèm số AU / Mis / MCQ liên quan. Bạn có
+                thể chỉnh sửa text, chỉnh Bloom hoặc xóa LLO (xóa sẽ kéo theo
+                xóa AU / Mis / MCQ qua ON DELETE CASCADE).
+              </p>
+            </div>
+            {loadingExistingLlos && (
+              <span className="text-[11px] text-slate-500">Đang tải…</span>
+            )}
+          </div>
+
+          {existingLlos.length === 0 && !loadingExistingLlos && (
+            <p className="text-[11px] text-slate-500">
+              Chưa có LLO nào được lưu cho bài học này.
+            </p>
+          )}
+
+          {existingLlos.length > 0 && (
+            <div className="space-y-3">
+              {existingLlos.map((row) => {
+                const isEditing = editingLloId === row.id;
+                return (
+                  <div
+                    key={row.id}
+                    className="border border-slate-100 rounded-xl px-3 py-2.5 bg-slate-50/60 flex flex-col gap-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        {!isEditing ? (
+                          <p className="text-xs text-slate-800">{row.text}</p>
+                        ) : (
+                          <textarea
+                            className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+                            rows={2}
+                            value={editLloText}
+                            onChange={(e) => setEditLloText(e.target.value)}
+                          />
+                        )}
+
+                        {/* Bloom + counts */}
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          {!isEditing ? (
+                            <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border border-slate-300 text-slate-700 bg-white">
+                              Bloom: {row.bloom_suggested || "—"}
+                            </span>
+                          ) : (
+                            <select
+                              className="text-[11px] border rounded-full px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+                              value={editLloBloom}
+                              onChange={(e) => setEditLloBloom(e.target.value)}
+                            >
+                              <option value="">
+                                = Không đặt (dùng Bloom mục tiêu) =
+                              </option>
+                              {BLOOM_LEVELS.map((b) => (
+                                <option key={b.value} value={b.value}>
+                                  {b.label}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                            <span className="px-1.5 py-0.5 rounded-full bg-slate-900 text-white">
+                              AU {row.au_count}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-800">
+                              Mis {row.mis_count}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-800">
+                              MCQ {row.mcq_count}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        {!isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingLloId(row.id);
+                                setEditLloText(row.text);
+                                setEditLloBloom(row.bloom_suggested || "");
+                              }}
+                              className="px-2 py-1 rounded-lg bg-white border border-slate-300 text-[11px] text-slate-700 hover:border-brand-400 hover:text-brand-700"
+                            >
+                              Sửa
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleDeleteExistingLlo(row.id, row.text)
+                              }
+                              className="px-2 py-1 rounded-lg bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100"
+                            >
+                              Xóa
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEditLlo(row.id)}
+                              className="px-2 py-1 rounded-lg bg-brand-600 text-[11px] text-white hover:bg-brand-700"
+                            >
+                              Lưu
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleCancelEditLlo}
+                              className="px-2 py-1 rounded-lg bg-slate-100 text-[11px] text-slate-600 hover:bg-slate-200"
+                            >
+                              Hủy
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Kết quả đánh giá LLO */}
       {evalError && (
