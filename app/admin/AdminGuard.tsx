@@ -15,24 +15,36 @@ type Profile = {
   role: string | null;
 };
 
+// ✅ Cache kết quả kiểm tra admin cho cả module (1 tab)
+let cachedIsAdmin: boolean | null = null;
+
 export default function AdminGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const [state, setState] = useState<GuardState>("checking");
 
-  // ✅ 1 instance duy nhất cho cả page
+  // Nếu đã biết chắc là admin rồi thì khỏi show trạng thái checking
+  const [state, setState] = useState<GuardState>(
+    cachedIsAdmin === true ? "allowed" : "checking"
+  );
+
+  // ✅ 1 instance Supabase duy nhất
   const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   useEffect(() => {
     let mounted = true;
 
     async function checkAdmin() {
-      setState("checking");
+      // Nếu đã cache admin trong module => cho qua luôn
+      if (cachedIsAdmin === true) {
+        setState("allowed");
+        return;
+      }
 
       // 1) Lấy user hiện tại
       const { data, error: userError } = await supabase.auth.getUser();
-      const user = data.user;
+      const user = data?.user;
 
       if (userError || !user) {
+        if (!mounted) return;
         router.replace("/login?next=/admin");
         return;
       }
@@ -44,41 +56,38 @@ export default function AdminGuard({ children }: { children: ReactNode }) {
         .eq("id", user.id)
         .single();
 
+      if (!mounted) return;
+
       if (profileError || !profileRow) {
+        cachedIsAdmin = false;
         router.replace("/?denied=1&reason=no-profile");
         return;
       }
 
       const profile = profileRow as Profile;
 
-      if (!mounted) return;
-
       if (profile.role === "admin") {
+        cachedIsAdmin = true;
         setState("allowed");
       } else {
+        cachedIsAdmin = false;
         router.replace("/?denied=1&reason=not-admin");
       }
     }
 
-    checkAdmin();
-
-    // ✅ bắt các thay đổi auth (logout/refresh/session update)
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+    // ❗ Chỉ check một lần khi mount (hoặc khi chưa có cache)
+    if (cachedIsAdmin !== true) {
       checkAdmin();
-    });
+    }
 
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
     };
   }, [router, supabase]);
 
+  // 👉 Không show text “Đang kiểm tra…” để đỡ khó chịu
   if (state === "checking") {
-    return (
-      <div className="max-w-6xl mx-auto px-4 py-10 text-sm text-slate-600">
-        Đang kiểm tra quyền truy cập admin…
-      </div>
-    );
+    return null;
   }
 
   return <>{children}</>;
