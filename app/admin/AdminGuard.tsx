@@ -1,10 +1,10 @@
 // app/admin/AdminGuard.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type GuardState = "checking" | "allowed";
 
@@ -19,33 +19,39 @@ export default function AdminGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<GuardState>("checking");
 
+  // ✅ 1 instance duy nhất cho cả page
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
+
   useEffect(() => {
+    let mounted = true;
+
     async function checkAdmin() {
-      // 1. Lấy user hiện tại
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
+      setState("checking");
+
+      // 1) Lấy user hiện tại
+      const { data, error: userError } = await supabase.auth.getUser();
+      const user = data.user;
 
       if (userError || !user) {
-        // Chưa đăng nhập → về /login kèm next=/admin
         router.replace("/login?next=/admin");
         return;
       }
 
-      // 2. Lấy role từ profiles
-      const { data, error: profileError } = await supabase
+      // 2) Lấy role từ profiles
+      const { data: profileRow, error: profileError } = await supabase
         .from("profiles")
-        .select<"id, email, name, role">("id, email, name, role")
+        .select("id, email, name, role")
         .eq("id", user.id)
         .single();
 
-      if (profileError || !data) {
+      if (profileError || !profileRow) {
         router.replace("/?denied=1&reason=no-profile");
         return;
       }
 
-      const profile = data as unknown as Profile;
+      const profile = profileRow as Profile;
+
+      if (!mounted) return;
 
       if (profile.role === "admin") {
         setState("allowed");
@@ -55,7 +61,17 @@ export default function AdminGuard({ children }: { children: ReactNode }) {
     }
 
     checkAdmin();
-  }, [router]);
+
+    // ✅ bắt các thay đổi auth (logout/refresh/session update)
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      checkAdmin();
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [router, supabase]);
 
   if (state === "checking") {
     return (
