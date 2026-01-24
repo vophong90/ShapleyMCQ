@@ -139,7 +139,7 @@ export default function AdminBooksPage() {
 
       const ts = new Date().toISOString().replace(/[:.]/g, "-");
       const originalName = safeFileName(file.name || `${title.trim()}`);
-      const storage_path = `books/${bookId}/${ts}-${originalName}`;
+      const storage_path = `${bookId}/${ts}-${originalName}`;
 
       const up = await supabase.storage.from(DEFAULT_BUCKET).upload(storage_path, file, {
         upsert: true,
