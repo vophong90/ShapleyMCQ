@@ -1551,7 +1551,7 @@ export default function ContextWizardPage() {
                           <>
                             <button
                               type="button"
-                              onClick={() => handleSaveEditLlo(row.id)}
+                              onClick={() => handleSaveEditLlo(row.llo_id)}
                               className="px-2 py-1 rounded-lg bg-brand-600 text-[11px] text-white hover:bg-brand-700"
                             >
                               Lưu
