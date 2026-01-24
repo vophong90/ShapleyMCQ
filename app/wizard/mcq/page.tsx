@@ -569,7 +569,7 @@ export default function MCQWizard() {
   // ========== RENDER ==========
   return (
     <div className="h-[calc(100vh-60px)] bg-gray-50 p-6 pb-24">
-      <div className="max-w-6xl mx-auto h-full flex flex-col gap-4">
+      <div className="max-w-6xl mx-auto h-full flex flex-col gap-4 min-h-0">
         <MCQHeader context={context} />
 
         <SelectorBar
