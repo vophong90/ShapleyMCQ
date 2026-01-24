@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Profile = {
   id: string;
@@ -13,50 +13,66 @@ type Profile = {
 };
 
 export function MainNav() {
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
+  const router = useRouter();
+
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [accountOpen, setAccountOpen] = useState(false);
-  const router = useRouter();
 
   useEffect(() => {
+    let alive = true;
+
     async function loadProfile() {
-      // 1. Lấy user hiện tại từ Supabase Auth
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        // 1. Lấy session hiện tại
+        const { data, error } = await supabase.auth.getSession();
+        const user = data?.session?.user;
 
-      if (!user) {
+        if (error || !user) {
+          if (!alive) return;
+          setProfile(null);
+          setLoading(false);
+          return;
+        }
+
+        // 2. Lấy profile từ bảng profiles
+        const { data: profileRow, error: profileErr } = await supabase
+          .from("profiles")
+          .select("id, email, name, role")
+          .eq("id", user.id)
+          .single();
+
+        if (!alive) return;
+
+        if (profileErr || !profileRow) {
+          setProfile(null);
+        } else {
+          setProfile(profileRow as Profile);
+        }
+      } catch (e) {
+        console.error(e);
+        if (!alive) return;
         setProfile(null);
-        setLoading(false);
-        return;
+      } finally {
+        if (alive) setLoading(false);
       }
-
-      // 2. Lấy profile (kèm role) từ public.profiles
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, email, name, role")
-        .eq("id", user.id)
-        .single();
-
-      if (!error && data) {
-        setProfile(data as Profile);
-      } else {
-        setProfile(null);
-      }
-
-      setLoading(false);
     }
 
     loadProfile();
-  }, []);
 
-  const displayName = profile?.name || profile?.email || ""; // ưu tiên name, fallback email
+    return () => {
+      alive = false;
+    };
+  }, [supabase]);
+
+  const displayName = profile?.name || profile?.email || "";
 
   async function handleLogout() {
     await supabase.auth.signOut();
     setProfile(null);
     setAccountOpen(false);
-    router.push("/"); // hoặc "/login" tuỳ bạn
+    router.push("/login");
   }
 
   return (
@@ -80,14 +96,10 @@ export function MainNav() {
           Home
         </Link>
 
-        <Link
-          href="/dashboard"
-          className="text-slate-600 hover:text-brand-600"
-        >
+        <Link href="/dashboard" className="text-slate-600 hover:text-brand-600">
           Dashboard
         </Link>
 
-        {/* Khảo thí: tạo đề theo blueprint */}
         {profile && (
           <Link
             href="/exam-blueprints"
@@ -97,18 +109,16 @@ export function MainNav() {
           </Link>
         )}
 
-        {/* Nếu là admin thì thêm nút Admin */}
         {profile?.role === "admin" && (
           <Link href="/admin" className="text-slate-600 hover:text-brand-600">
             Admin
           </Link>
         )}
 
-        {/* Loading */}
+        {/* Trạng thái auth */}
         {loading ? (
           <span className="text-xs text-slate-400">Đang tải…</span>
         ) : profile ? (
-          // ĐÃ LOGIN: dropdown Tài khoản ẩn trong tên user
           <div className="relative">
             <button
               type="button"
@@ -149,18 +159,13 @@ export function MainNav() {
             )}
           </div>
         ) : (
-          // CHƯA LOGIN: hiện Đăng nhập + Đăng ký
           <>
-            <Link
-              href="/login"
-              className="text-slate-600 hover:text-brand-600"
-            >
+            <Link href="/login" className="text-slate-600 hover:text-brand-600">
               Đăng nhập
             </Link>
             <Link
               href="/register"
               className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-medium hover:bg-brand-700"
-              hrefLang="vi"
             >
               Đăng ký
             </Link>
