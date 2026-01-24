@@ -42,21 +42,11 @@ export default function DashboardPage() {
     let alive = true;
 
     async function getUserHeaderFromSession(): Promise<string | null> {
-      // 1) Lấy access_token từ Supabase session
       const { data, error } = await supabase.auth.getSession();
-      const accessToken = data?.session?.access_token;
-
-      if (error || !accessToken) return null;
-
-      // 2) Gửi token lên /api/auth/session để lấy user header theo chuẩn API hiện tại
-      const r = await fetch("/api/auth/session", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!r.ok) return null;
-
-      // API trả về userId dưới dạng header Authorization: Bearer <user_id>
-      return r.headers.get("Authorization");
+      const userId = data?.session?.user?.id; // ✅ lấy thẳng user.id
+      
+      if (error || !userId) return null;
+      return `Bearer ${userId}`;
     }
 
     async function load() {
