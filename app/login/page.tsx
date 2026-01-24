@@ -17,28 +17,35 @@ export default function LoginPage() {
     e.preventDefault();
     setMsg(null);
 
-    if (!email.trim() || !password) {
+    const em = email.trim();
+
+    if (!em || !password) {
       setMsg("Vui lòng nhập đầy đủ email và mật khẩu.");
       return;
     }
 
     setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: em,
+        password,
+      });
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+      if (error) {
+        console.error(error);
+        setMsg("Đăng nhập thất bại: " + error.message);
+        return;
+      }
 
-    if (error) {
-      console.error(error);
-      setMsg("Đăng nhập thất bại: " + error.message);
+      setMsg("Đăng nhập thành công. Đang chuyển đến Dashboard…");
+      router.push("/dashboard");
+      router.refresh(); // giúp server components/routes nhận cookie mới
+    } catch (err: any) {
+      console.error(err);
+      setMsg(err?.message ?? "Có lỗi xảy ra khi đăng nhập.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setMsg("Đăng nhập thành công. Đang chuyển đến Dashboard…");
-    router.push("/dashboard"); // ✅ không cần setTimeout
-    router.refresh(); // ✅ đảm bảo server routes thấy cookie mới
   }
 
   return (
@@ -62,6 +69,7 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
+            autoComplete="email"
           />
         </div>
 
@@ -75,6 +83,7 @@ export default function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Nhập mật khẩu"
+            autoComplete="current-password"
           />
         </div>
 
