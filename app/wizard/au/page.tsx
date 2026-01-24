@@ -2,7 +2,7 @@
 
 import { useEffect, useState, ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type WizardContext = {
   specialty_id?: string;
@@ -57,6 +57,7 @@ function normalizeCore(text: string): string {
 
 export default function AUPage() {
   const router = useRouter();
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   const [context, setContext] = useState<WizardContext | null>(null);
   const [loading, setLoading] = useState(true);
