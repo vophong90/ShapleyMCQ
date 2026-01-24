@@ -2,7 +2,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, ChangeEvent } from "react";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type BookRow = {
@@ -27,18 +26,6 @@ function safeFileName(name: string) {
   return base.slice(0, 180) || "file";
 }
 
-function getSupabaseBrowserClient(): SupabaseClient | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) return null;
-  return createClient(url, anon, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-    },
-  });
-}
 
 export default function AdminBooksPage() {
   const [loading, setLoading] = useState(true);
@@ -56,7 +43,7 @@ export default function AdminBooksPage() {
   // pagination state
   const [page, setPage] = useState(1);
 
-  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   async function loadBooks(keyword: string) {
     setLoading(true);
