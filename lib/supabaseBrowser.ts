@@ -1,20 +1,25 @@
-import { createClient } from "@supabase/supabase-js";
-import type { SupabaseClient } from "@supabase/supabase-js";
+// lib/supabase-browser.ts
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-let browserClient: SupabaseClient | null = null;
+declare global {
+  var _supabaseBrowserClient: SupabaseClient | undefined;
+}
 
 export function getSupabaseBrowser(): SupabaseClient {
-  if (browserClient) return browserClient;
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-  if (!url || !anon) {
-    // fail fast: để khỏi “null” và khỏi undefined behavior
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  if (globalThis._supabaseBrowserClient) {
+    return globalThis._supabaseBrowserClient;
   }
 
-  browserClient = createClient(url, anon, {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anon) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    );
+  }
+
+  const client = createClient(url, anon, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
@@ -22,5 +27,6 @@ export function getSupabaseBrowser(): SupabaseClient {
     },
   });
 
-  return browserClient;
+  globalThis._supabaseBrowserClient = client;
+  return client;
 }
