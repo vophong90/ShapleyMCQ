@@ -72,3 +72,6 @@ export type ExistingMcqSummary = {
   stem: string;
   created_at: string | null;
 };
+
+export type StemLength = "short" | "medium" | "long";
+export type DifficultyLevel = "very_hard" | "hard" | "medium" | "easy";
