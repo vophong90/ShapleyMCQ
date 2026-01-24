@@ -32,12 +32,9 @@ async function requireAdmin() {
   }
 
   const role = (profile as any).role || null;
-  const systemRole = (profile as any).system_role || null;
 
   const isAdmin =
-    ["admin", "super_admin", "system_admin"].includes(String(role || "")) ||
-    ["admin", "super_admin", "system_admin"].includes(String(systemRole || ""));
-
+    ["admin"].includes(String(role || ""));
   if (!isAdmin) return { ok: false, status: 403, error: "Admin only" as const };
 
   return { ok: true, user_id: userId };
