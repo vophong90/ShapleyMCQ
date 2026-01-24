@@ -31,25 +31,53 @@ function getProjectIdFromUrl(url: string) {
 }
 
 async function requireAdmin(req: NextRequest) {
-  const supabase = await getRouteClient();
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return { ok: false, status: 401, error: "Unauthenticated" as const };
+  // 1) chỉ lấy session từ cookie bằng route client
+  const supabaseRoute = await getRouteClient();
+  const {
+    data: { session },
+    error: sessErr,
+  } = await supabaseRoute.auth.getSession();
 
-  const { data: profile } = await supabase
+  if (sessErr || !session) {
+    return { ok: false, status: 401, error: "Unauthenticated" as const };
+  }
+
+  const userId = session.user.id;
+
+  // 2) check role bằng service-role (admin) để KHÔNG vướng RLS
+  const supabaseAdmin = getSupabaseAdmin();
+  const { data: profile, error: profErr } = await supabaseAdmin
     .from("profiles")
     .select("id, role, system_role")
-    .eq("id", session.user.id)
-    .maybeSingle();
+    .eq("id", userId)
+    .single();
 
-  const role = (profile as any)?.role ?? null;
-  const systemRole = (profile as any)?.system_role ?? null;
+  if (profErr || !profile) {
+    return {
+      ok: false,
+      status: 403,
+      error: "No profile / forbidden" as const,
+      detail: profErr?.message || null,
+    };
+  }
+
+  const role = (profile as any).role ?? null;
+  const systemRole = (profile as any).system_role ?? null;
 
   const isAdmin =
     ["admin", "super_admin", "system_admin"].includes(String(role || "")) ||
     ["admin", "super_admin", "system_admin"].includes(String(systemRole || ""));
 
-  if (!isAdmin) return { ok: false, status: 403, error: "Admin only" as const };
-  return { ok: true, user_id: session.user.id };
+  if (!isAdmin) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Admin only" as const,
+      detail: { role, systemRole },
+    };
+  }
+
+  return { ok: true, user_id: userId };
 }
 
 type Body = {
