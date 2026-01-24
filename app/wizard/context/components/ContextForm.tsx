@@ -202,7 +202,6 @@ export function ContextForm({ ctx }: Props) {
                       setNewCourseCode("");
                       handleChange("course_id", "");
                       handleChange("lesson_id", "");
-                      setLessons([]);
                       setExistingLlos([]);
                     }}
                     className="text-[11px] text-brand-700 hover:underline"
