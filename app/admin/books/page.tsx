@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState, ChangeEvent } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
+import * as tus from "tus-js-client";
 
 type BookRow = {
   id: string;
@@ -26,6 +27,53 @@ function safeFileName(name: string) {
   return base.slice(0, 180) || "file";
 }
 
+async function uploadResumableToSupabase(params: {
+  tusEndpoint: string;
+  bucket: string;
+  objectName: string;
+  token: string; // signed upload token
+  file: File;
+  onProgress?: (pct: number) => void;
+}) {
+  const { tusEndpoint, bucket, objectName, token, file, onProgress } = params;
+
+  return new Promise<void>((resolve, reject) => {
+    const upload = new tus.Upload(file, {
+      endpoint: tusEndpoint,
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+
+      // ✅ Supabase Storage TUS requires Authorization Bearer <signed_token>
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-upsert": "true",
+      },
+
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+
+      metadata: {
+        bucketName: bucket,
+        objectName,
+        contentType: file.type || "application/octet-stream",
+      },
+
+      // ✅ Supabase TUS chunk size requirement is 6MB
+      chunkSize: 6 * 1024 * 1024,
+
+      onError: (err) => reject(err),
+      onProgress: (bytesUploaded, bytesTotal) => {
+        const pct = bytesTotal ? (bytesUploaded / bytesTotal) * 100 : 0;
+        onProgress?.(Number(pct.toFixed(2)));
+      },
+      onSuccess: () => resolve(),
+    });
+
+    upload.findPreviousUploads().then((prev) => {
+      if (prev.length) upload.resumeFromPreviousUpload(prev[0]);
+      upload.start();
+    });
+  });
+}
 
 export default function AdminBooksPage() {
   const [loading, setLoading] = useState(true);
@@ -43,6 +91,7 @@ export default function AdminBooksPage() {
   // pagination state
   const [page, setPage] = useState(1);
 
+  // still keep supabase browser client (auth cookie / other uses)
   const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   async function loadBooks(keyword: string) {
@@ -101,7 +150,9 @@ export default function AdminBooksPage() {
     setProgressMsg("1/4 Đang tạo metadata...");
 
     try {
-      // 1) Create metadata (DB)
+      /* =========================================
+         1) Create metadata (DB)
+      ========================================= */
       const createRes = await fetch("/api/admin/books/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -134,26 +185,57 @@ export default function AdminBooksPage() {
         return;
       }
 
-      // 2) Upload trực tiếp lên Storage (client) — tránh 413
-      setProgressMsg("2/4 Đang upload file lên Storage (client)...");
+      /* =========================================
+         2) Resumable upload via signed TUS token
+      ========================================= */
+      setProgressMsg("2/4 Đang chuẩn bị upload (signed resumable)...");
 
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      const originalName = safeFileName(file.name || `${title.trim()}`);
-      const storage_path = `${bookId}/${ts}-${originalName}`;
-
-      const up = await supabase.storage.from(DEFAULT_BUCKET).upload(storage_path, file, {
-        upsert: true,
-        contentType: file.type || "application/octet-stream",
+      // 2.1) get signed upload token + objectName
+      const initRes = await fetch("/api/admin/books/upload-init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          book_id: bookId,
+          file_name: safeFileName(file.name || `${title.trim()}`),
+          content_type: file.type || null,
+          upsert: true,
+        }),
       });
 
-      if (up.error) {
+      const initJson = await initRes.json().catch(() => ({}));
+
+      if (!initRes.ok || initJson?.error) {
         setProgressMsg(null);
-        alert("Upload Storage thất bại: " + up.error.message);
+        alert(
+          "Upload init thất bại: " + (initJson?.error || initRes.statusText)
+        );
         setCreatingAll(false);
         return;
       }
 
-      // 3) Gọi API upload (mới) để "attach" file vào DB: update storage_bucket/path + metadata
+      const tusEndpoint: string = initJson.tusEndpoint;
+      const token: string = initJson.token;
+      const objectName: string = initJson.objectName;
+      const bucket: string = initJson.bucket || DEFAULT_BUCKET;
+
+      // 2.2) do upload (resumable)
+      setProgressMsg("2/4 Đang upload file (resumable)... 0%");
+      await uploadResumableToSupabase({
+        tusEndpoint,
+        bucket,
+        objectName,
+        token,
+        file,
+        onProgress: (pct) =>
+          setProgressMsg(`2/4 Đang upload file (resumable)... ${pct}%`),
+      });
+
+      // after upload, storage_path = objectName
+      const storage_path = objectName;
+
+      /* =========================================
+         3) Attach DB: update storage_bucket/path + file metadata
+      ========================================= */
       setProgressMsg("3/4 Đang cập nhật DB (storage_bucket/path + metadata)...");
 
       const attachRes = await fetch("/api/admin/books/upload", {
@@ -161,11 +243,9 @@ export default function AdminBooksPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           book_id: bookId,
-          storage_bucket: DEFAULT_BUCKET, // "books"
           storage_path,
           mime_type: file.type || null,
           file_size: file.size || null,
-          // checksum_sha256: null, // nếu sau này bạn muốn tính thì bổ sung
         }),
       });
 
@@ -182,7 +262,9 @@ export default function AdminBooksPage() {
         return;
       }
 
-      // 4) Ingest
+      /* =========================================
+         4) Ingest
+      ========================================= */
       setProgressMsg("4/4 Đang ingest (tách đoạn + embedding + lưu chunks)...");
 
       const ingestRes = await fetch("/api/admin/books/ingest", {
@@ -190,7 +272,6 @@ export default function AdminBooksPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           book_id: bookId,
-          // ✅ mặc định “an toàn”
           rebuild: true,
           embedding_model: "text-embedding-3-small",
           chunk_target_chars: 900,
@@ -250,7 +331,8 @@ export default function AdminBooksPage() {
       <div>
         <h2 className="text-lg font-bold text-slate-900">Books</h2>
         <p className="text-sm text-slate-600">
-          1 nút: Tạo metadata → Upload thẳng Storage (bucket: <b>{DEFAULT_BUCKET}</b>) → API cập nhật DB → ingest.
+          1 nút: Tạo metadata → Upload resumable (bucket:{" "}
+          <b>{DEFAULT_BUCKET}</b>) → API cập nhật DB → ingest.
         </p>
       </div>
 
@@ -333,7 +415,8 @@ export default function AdminBooksPage() {
         </div>
 
         <p className="text-[11px] text-slate-500">
-          Mặc định: upsert upload = true, rebuild ingest = true, model = text-embedding-3-small, chunk=900 overlap=150.
+          Mặc định: upload resumable (6MB chunks), rebuild ingest = true, model =
+          text-embedding-3-small, chunk=900 overlap=150.
         </p>
       </div>
 
@@ -375,7 +458,10 @@ export default function AdminBooksPage() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-3 text-slate-500 text-center">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-3 text-slate-500 text-center"
+                  >
                     Đang tải...
                   </td>
                 </tr>
@@ -383,7 +469,10 @@ export default function AdminBooksPage() {
 
               {!loading && pageItems.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-3 text-slate-500 text-center">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-3 text-slate-500 text-center"
+                  >
                     Chưa có book nào.
                   </td>
                 </tr>
@@ -393,14 +482,18 @@ export default function AdminBooksPage() {
                 pageItems.map((b) => (
                   <tr key={b.id} className="hover:bg-slate-50">
                     <td className="px-3 py-2 border-t">
-                      <div className="font-semibold text-slate-900">{b.title}</div>
+                      <div className="font-semibold text-slate-900">
+                        {b.title}
+                      </div>
                     </td>
                     <td className="px-3 py-2 border-t">
                       {b.specialty_name || b.specialty_id || "—"}
                     </td>
                     <td className="px-3 py-2 border-t">{b.status || "draft"}</td>
                     <td className="px-3 py-2 border-t">
-                      {b.created_at ? new Date(b.created_at).toLocaleString() : "—"}
+                      {b.created_at
+                        ? new Date(b.created_at).toLocaleString()
+                        : "—"}
                     </td>
                   </tr>
                 ))}
@@ -411,7 +504,8 @@ export default function AdminBooksPage() {
         {/* Pagination controls */}
         <div className="flex items-center justify-between pt-2">
           <div className="text-xs text-slate-500">
-            Trang <span className="font-semibold text-slate-900">{safePage}</span> /{" "}
+            Trang{" "}
+            <span className="font-semibold text-slate-900">{safePage}</span> /{" "}
             <span className="font-semibold text-slate-900">{totalPages}</span>
           </div>
 
