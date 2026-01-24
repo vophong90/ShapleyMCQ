@@ -31,42 +31,32 @@ async function uploadResumableToSupabase(params: {
   tusEndpoint: string;
   bucket: string;
   objectName: string;
-  token: string;   // signed upload token (JWT) from createSignedUploadUrl
-  anonKey: string; // NEXT_PUBLIC_SUPABASE_ANON_KEY
+  anonKey: string;
+  accessToken: string; // <-- session.access_token
   file: File;
   onProgress?: (pct: number) => void;
 }) {
-  const { tusEndpoint, bucket, objectName, token, anonKey, file, onProgress } = params;
+  const { tusEndpoint, bucket, objectName, anonKey, accessToken, file, onProgress } = params;
 
   return new Promise<void>((resolve, reject) => {
     const upload = new tus.Upload(file, {
       endpoint: tusEndpoint,
       retryDelays: [0, 3000, 5000, 10000, 20000],
-
-      // ✅ chuẩn Supabase Storage TUS signed upload
       headers: {
         apikey: anonKey,
-        Authorization: `Bearer ${token}`, // IMPORTANT: token (JWT), không phải anonKey
-        "x-upsert": "true",
+        authorization: `Bearer ${accessToken}`, // ✅ dùng access_token
       },
-
-      uploadDataDuringCreation: true,
-      removeFingerprintOnSuccess: true,
-
       metadata: {
         bucketName: bucket,
         objectName,
         contentType: file.type || "application/octet-stream",
         cacheControl: "3600",
       },
-
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
       chunkSize: 6 * 1024 * 1024,
-
-      onError: (err) => reject(err),
-      onProgress: (bytesUploaded, bytesTotal) => {
-        const pct = bytesTotal ? (bytesUploaded / bytesTotal) * 100 : 0;
-        onProgress?.(Number(pct.toFixed(2)));
-      },
+      onError: reject,
+      onProgress: (u, t) => onProgress?.(Number(((u / t) * 100).toFixed(2))),
       onSuccess: () => resolve(),
     });
 
@@ -230,13 +220,23 @@ export default function AdminBooksPage() {
         return;
       }
 
+      const { data: sessData, error: sessErr } = await supabase.auth.getSession();
+      const accessToken = sessData?.session?.access_token;
+      
+      if (sessErr || !accessToken) {
+        setProgressMsg(null);
+        alert("Không lấy được session access_token. Bạn đăng nhập lại.");
+        setCreatingAll(false);
+        return;
+      }
+
       // 2.2) do upload (resumable)
       setProgressMsg("2/4 Đang upload file (resumable)... 0%");
       await uploadResumableToSupabase({
         tusEndpoint,
         bucket,
         objectName,
-        token,
+        accessToken,
         anonKey,
         file,
         onProgress: (pct) =>
