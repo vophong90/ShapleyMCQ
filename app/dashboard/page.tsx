@@ -1,3 +1,4 @@
+// app/dashboard/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -8,6 +9,9 @@ import Sparkline from "@/components/charts/Sparkline";
 import BarMini from "@/components/charts/BarMini";
 import DonutMini from "@/components/charts/DonutMini";
 
+/* ===============================
+   TYPES
+================================ */
 type DashboardStats = {
   courseCount: number;
   lessonCount: number;
@@ -16,10 +20,14 @@ type DashboardStats = {
   misCount: number;
   mcqCount: number;
 
-  bloomLlo?: any;
-  bloomAu?: any;
-  bloomMcq?: any;
-  sparklineMcq?: any;
+  bloomLlo?: any[];
+  bloomAu?: any[];
+  bloomMcq?: any[];
+
+  sparklineMcq?: any[];
+  sparklineCourses?: any[];
+  sparklineLessons?: any[];
+  sparklineMis?: any[];
 };
 
 type ProjectRow = {
@@ -43,8 +51,7 @@ export default function DashboardPage() {
 
     async function getUserHeaderFromSession(): Promise<string | null> {
       const { data, error } = await supabase.auth.getSession();
-      const userId = data?.session?.user?.id; // ✅ lấy thẳng user.id
-      
+      const userId = data?.session?.user?.id;
       if (error || !userId) return null;
       return `Bearer ${userId}`;
     }
@@ -62,7 +69,9 @@ export default function DashboardPage() {
         }
 
         const [resStats, resProjects] = await Promise.all([
-          fetch("/api/dashboard/stats", { headers: { Authorization: userHeader } }),
+          fetch("/api/dashboard/stats", {
+            headers: { Authorization: userHeader },
+          }),
           fetch("/api/dashboard/projects?page=1&limit=5", {
             headers: { Authorization: userHeader },
           }),
@@ -103,39 +112,91 @@ export default function DashboardPage() {
     auCount: stats?.auCount ?? 0,
     misCount: stats?.misCount ?? 0,
     mcqCount: stats?.mcqCount ?? 0,
+
     bloomLlo: stats?.bloomLlo,
     bloomAu: stats?.bloomAu,
     bloomMcq: stats?.bloomMcq,
+
     sparklineMcq: stats?.sparklineMcq,
+    sparklineCourses: stats?.sparklineCourses,
+    sparklineLessons: stats?.sparklineLessons,
+    sparklineMis: stats?.sparklineMis,
   };
 
-  const hasBloomLlo = Array.isArray(safeStats.bloomLlo) && safeStats.bloomLlo.length > 0;
-  const hasBloomAu = Array.isArray(safeStats.bloomAu) && safeStats.bloomAu.length > 0;
-  const hasBloomMcq = Array.isArray(safeStats.bloomMcq) && safeStats.bloomMcq.length > 0;
+  const hasBloomLlo =
+    Array.isArray(safeStats.bloomLlo) && safeStats.bloomLlo.length > 0;
+  const hasBloomAu =
+    Array.isArray(safeStats.bloomAu) && safeStats.bloomAu.length > 0;
+  const hasBloomMcq =
+    Array.isArray(safeStats.bloomMcq) && safeStats.bloomMcq.length > 0;
+
   const hasSparklineMcq =
-    Array.isArray(safeStats.sparklineMcq) && safeStats.sparklineMcq.length > 0;
+    Array.isArray(safeStats.sparklineMcq) &&
+    safeStats.sparklineMcq.length > 0;
+  const hasSparklineCourses =
+    Array.isArray(safeStats.sparklineCourses) &&
+    safeStats.sparklineCourses.length > 0;
+  const hasSparklineLessons =
+    Array.isArray(safeStats.sparklineLessons) &&
+    safeStats.sparklineLessons.length > 0;
+  const hasSparklineMis =
+    Array.isArray(safeStats.sparklineMis) &&
+    safeStats.sparklineMis.length > 0;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
       {/* ======= KPI ========= */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <KpiCard label="Học phần" value={safeStats.courseCount} />
-        <KpiCard label="Bài học" value={safeStats.lessonCount} />
+        <KpiCard
+          label="Học phần"
+          value={safeStats.courseCount}
+          chart={
+            hasSparklineCourses ? (
+              <Sparkline data={safeStats.sparklineCourses} />
+            ) : undefined
+          }
+        />
+
+        <KpiCard
+          label="Bài học"
+          value={safeStats.lessonCount}
+          chart={
+            hasSparklineLessons ? (
+              <Sparkline data={safeStats.sparklineLessons} />
+            ) : undefined
+          }
+        />
+
         <KpiCard
           label="LLO"
           value={safeStats.lloCount}
           chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined}
         />
+
         <KpiCard
           label="Assessment Units"
           value={safeStats.auCount}
           chart={hasBloomAu ? <BarMini data={safeStats.bloomAu} /> : undefined}
         />
-        <KpiCard label="Misconceptions" value={safeStats.misCount} />
+
+        <KpiCard
+          label="Misconceptions"
+          value={safeStats.misCount}
+          chart={
+            hasSparklineMis ? (
+              <Sparkline data={safeStats.sparklineMis} />
+            ) : undefined
+          }
+        />
+
         <KpiCard
           label="MCQ Items"
           value={safeStats.mcqCount}
-          chart={hasSparklineMcq ? <Sparkline data={safeStats.sparklineMcq} /> : undefined}
+          chart={
+            hasSparklineMcq ? (
+              <Sparkline data={safeStats.sparklineMcq} />
+            ) : undefined
+          }
         />
       </div>
 
@@ -145,7 +206,8 @@ export default function DashboardPage() {
           Quy trình 5 bước xây dựng ngân hàng MCQ
         </h2>
         <p className="text-xs text-slate-500 mb-4">
-          Mỗi bước hoạt động độc lập – bạn có thể vào bất cứ bước nào, bất cứ lúc nào.
+          Mỗi bước hoạt động độc lập – bạn có thể vào bất cứ bước nào, bất cứ lúc
+          nào.
         </p>
 
         <div className="grid md:grid-cols-3 gap-4">
@@ -167,27 +229,42 @@ export default function DashboardPage() {
             title="Bước 3. Misconceptions"
             desc="Sinh Misconceptions từ AU bằng GPT, duyệt và quản lý lỗi nhận thức."
             href="/wizard/misconcepts"
+            chart={
+              hasSparklineMis ? (
+                <Sparkline data={safeStats.sparklineMis} />
+              ) : undefined
+            }
           />
 
           <ModuleCard
             title="Bước 4. MCQ Generator"
             desc="Sinh bộ câu hỏi MCQ từ AU + Mis đã duyệt; thiết kế theo blueprint."
             href="/wizard/mcq"
-            chart={hasBloomMcq ? <DonutMini data={safeStats.bloomMcq} /> : undefined}
+            chart={
+              hasBloomMcq ? (
+                <DonutMini data={safeStats.bloomMcq} />
+              ) : undefined
+            }
           />
 
           <ModuleCard
             title="Bước 5. MCQ Analysis"
             desc="Phân tích bộ đề: độ khó, phân biệt, distrator, Shapley... (đang phát triển)."
             href="/wizard/simulate"
-            chart={hasSparklineMcq ? <Sparkline data={safeStats.sparklineMcq} /> : undefined}
+            chart={
+              hasSparklineMcq ? (
+                <Sparkline data={safeStats.sparklineMcq} />
+              ) : undefined
+            }
           />
         </div>
       </div>
 
       {/* ======= PROJECTS ========= */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-2">Các dự án MCQ gần đây</h2>
+        <h2 className="text-lg font-semibold text-slate-900 mb-2">
+          Các dự án MCQ gần đây
+        </h2>
 
         <div className="bg-white border rounded-xl p-4">
           {projects.length === 0 ? (
@@ -213,10 +290,15 @@ export default function DashboardPage() {
                     <td className="py-2">{p.lessons?.title ?? "-"}</td>
                     <td className="py-2">{p.progress ?? 0}%</td>
                     <td className="py-2">
-                      {p.updated_at ? new Date(p.updated_at).toLocaleDateString("vi-VN") : "-"}
+                      {p.updated_at
+                        ? new Date(p.updated_at).toLocaleDateString("vi-VN")
+                        : "-"}
                     </td>
                     <td className="py-2">
-                      <a href={`/wizard/project/${p.id}`} className="text-brand-600 hover:underline">
+                      <a
+                        href={`/wizard/project/${p.id}`}
+                        className="text-brand-600 hover:underline"
+                      >
                         Tiếp tục →
                       </a>
                     </td>
@@ -234,7 +316,16 @@ export default function DashboardPage() {
 /* ======================================
    COMPONENTS
 ======================================= */
-function KpiCard({ label, value, chart }: { label: string; value: number; chart?: ReactNode }) {
+
+function KpiCard({
+  label,
+  value,
+  chart,
+}: {
+  label: string;
+  value: number;
+  chart?: ReactNode;
+}) {
   return (
     <div className="bg-white rounded-xl p-4 border shadow-sm">
       <p className="text-xs text-slate-500">{label}</p>
@@ -263,7 +354,10 @@ function ModuleCard({
         {chart && <div className="mb-3">{chart}</div>}
       </div>
 
-      <a href={href} className="inline-block mt-1 px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white">
+      <a
+        href={href}
+        className="inline-block mt-1 px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white"
+      >
         Mở →
       </a>
     </div>
