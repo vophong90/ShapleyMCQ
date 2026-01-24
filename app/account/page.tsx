@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Profile = {
   id: string;
@@ -74,6 +74,7 @@ type ReceivedShare = {
 type TabKey = "bank" | "share";
 
 export default function AccountPage() {
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
 
