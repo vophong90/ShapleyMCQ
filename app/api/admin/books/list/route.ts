@@ -12,11 +12,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const keyword = (searchParams.get("keyword") || "").trim();
 
-    // ⚠️ tạm assume table là public.books (bạn sẽ tạo schema ở bước kế)
-    // Patch này chỉ dựng khung. Nếu chưa có table => sẽ báo lỗi rõ ràng.
     let q = supabaseAdmin
       .from("books")
-      .select("id, title, specialty_code, status, created_at")
+      .select("id, title, specialty_id, specialty_name, status, created_at")
       .order("created_at", { ascending: false })
       .limit(200);
 
@@ -32,6 +30,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: data || [] });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message || "Unknown error" },
+      { status: 500 }
+    );
   }
 }
