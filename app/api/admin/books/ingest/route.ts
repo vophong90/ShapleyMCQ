@@ -99,7 +99,7 @@ function modelToDim(model: string): number | null {
 
 async function requireAdmin(req: NextRequest) {
   // Dùng route client để đọc session cookie của user
-  const supabase = getRouteClient(req);
+  const supabase = await getRouteClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();
