@@ -152,7 +152,7 @@ export default function DashboardPage() {
           value={safeStats.courseCount}
           chart={
             hasSparklineCourses ? (
-              <Sparkline data={safeStats.sparklineCourses} />
+              <Sparkline data={safeStats.sparklineCourses || []} />
             ) : undefined
           }
         />
@@ -162,7 +162,7 @@ export default function DashboardPage() {
           value={safeStats.lessonCount}
           chart={
             hasSparklineLessons ? (
-              <Sparkline data={safeStats.sparklineLessons} />
+              <Sparkline data={safeStats.sparklineLessons || []} />
             ) : undefined
           }
         />
@@ -170,13 +170,13 @@ export default function DashboardPage() {
         <KpiCard
           label="LLO"
           value={safeStats.lloCount}
-          chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined}
+          chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo || []} /> : undefined}
         />
 
         <KpiCard
           label="Assessment Units"
           value={safeStats.auCount}
-          chart={hasBloomAu ? <BarMini data={safeStats.bloomAu} /> : undefined}
+          chart={hasBloomAu ? <BarMini data={safeStats.bloomAu || []} /> : undefined}
         />
 
         <KpiCard
@@ -184,7 +184,7 @@ export default function DashboardPage() {
           value={safeStats.misCount}
           chart={
             hasSparklineMis ? (
-              <Sparkline data={safeStats.sparklineMis} />
+              <Sparkline data={safeStats.sparklineMis || []} />
             ) : undefined
           }
         />
@@ -194,7 +194,7 @@ export default function DashboardPage() {
           value={safeStats.mcqCount}
           chart={
             hasSparklineMcq ? (
-              <Sparkline data={safeStats.sparklineMcq} />
+              <Sparkline data={safeStats.sparklineMcq || []} />
             ) : undefined
           }
         />
@@ -215,14 +215,14 @@ export default function DashboardPage() {
             title="Bước 1. Context & LLO"
             desc="Thiết lập học phần, bài học và LLO; gắn Bloom, level, bối cảnh."
             href="/wizard/context"
-            chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo} /> : undefined}
+            chart={hasBloomLlo ? <BarMini data={safeStats.bloomLlo || []} /> : undefined}
           />
 
           <ModuleCard
             title="Bước 2. Assessment Units"
             desc="Sinh và quản lý Assessment Units từ LLO, chuẩn bị nền cho Mis & MCQ."
             href="/wizard/au"
-            chart={hasBloomAu ? <BarMini data={safeStats.bloomAu} /> : undefined}
+            chart={hasBloomAu ? <BarMini data={safeStats.bloomAu || []} /> : undefined}
           />
 
           <ModuleCard
@@ -231,7 +231,7 @@ export default function DashboardPage() {
             href="/wizard/misconcepts"
             chart={
               hasSparklineMis ? (
-                <Sparkline data={safeStats.sparklineMis} />
+                <Sparkline data={safeStats.sparklineMis || []} />
               ) : undefined
             }
           />
@@ -242,7 +242,7 @@ export default function DashboardPage() {
             href="/wizard/mcq"
             chart={
               hasBloomMcq ? (
-                <DonutMini data={safeStats.bloomMcq} />
+                <DonutMini data={safeStats.bloomMcq || []} />
               ) : undefined
             }
           />
@@ -253,7 +253,7 @@ export default function DashboardPage() {
             href="/wizard/simulate"
             chart={
               hasSparklineMcq ? (
-                <Sparkline data={safeStats.sparklineMcq} />
+                <Sparkline data={safeStats.sparklineMcq || []} />
               ) : undefined
             }
           />
