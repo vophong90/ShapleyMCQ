@@ -36,7 +36,7 @@ async function requireAdmin() {
   // Hỗ trợ cả 2 cột role / system_role
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("id, role, system_role")
+    .select("id, role")
     .eq("id", userId)
     .maybeSingle();
 
