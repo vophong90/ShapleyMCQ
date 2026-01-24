@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     /* ===============================
        1. Kiểm tra session + admin
     =============================== */
-    const supabase = getRouteClient();
+    const supabase = await getRouteClient();
 
     const {
       data: { session },
