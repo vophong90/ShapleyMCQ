@@ -31,21 +31,38 @@ async function uploadResumableToSupabase(params: {
   tusEndpoint: string;
   bucket: string;
   objectName: string;
-  token: string; // signed upload token
+  token: string; // signed upload token (x-signature)
+  anonKey: string; // ✅ anon key
+  contentType?: string | null;
   file: File;
   onProgress?: (pct: number) => void;
 }) {
-  const { tusEndpoint, bucket, objectName, token, file, onProgress } = params;
+  const {
+    tusEndpoint,
+    bucket,
+    objectName,
+    token,
+    anonKey,
+    contentType,
+    file,
+    onProgress,
+  } = params;
+
+  const ct = contentType || file.type || "application/octet-stream";
 
   return new Promise<void>((resolve, reject) => {
     const upload = new tus.Upload(file, {
       endpoint: tusEndpoint,
       retryDelays: [0, 3000, 5000, 10000, 20000],
 
-      // ✅ Supabase Storage TUS requires Authorization Bearer <signed_token>
+      // ✅ ĐÚNG FLOW ANON + SIGNED TOKEN
       headers: {
-        authorization: `Bearer ${token}`,
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        "x-signature": token,
         "x-upsert": "true",
+        "x-content-type": ct,
+        "x-file-path": objectName,
       },
 
       uploadDataDuringCreation: true,
@@ -54,10 +71,11 @@ async function uploadResumableToSupabase(params: {
       metadata: {
         bucketName: bucket,
         objectName,
-        contentType: file.type || "application/octet-stream",
+        contentType: ct,
+        cacheControl: "3600",
       },
 
-      // ✅ Supabase TUS chunk size requirement is 6MB
+      // chunkSize 6MB ok
       chunkSize: 6 * 1024 * 1024,
 
       onError: (err) => reject(err),
@@ -212,11 +230,21 @@ export default function AdminBooksPage() {
         setCreatingAll(false);
         return;
       }
-
+      
       const tusEndpoint: string = initJson.tusEndpoint;
       const token: string = initJson.token;
       const objectName: string = initJson.objectName;
       const bucket: string = initJson.bucket || DEFAULT_BUCKET;
+
+      const anonKey: string =
+        initJson.anonKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      
+      if (!anonKey) {
+        setProgressMsg(null);
+        alert("Thiếu anonKey (NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+        setCreatingAll(false);
+        return;
+      }
 
       // 2.2) do upload (resumable)
       setProgressMsg("2/4 Đang upload file (resumable)... 0%");
@@ -225,6 +253,8 @@ export default function AdminBooksPage() {
         bucket,
         objectName,
         token,
+        anonKey,
+        contentType: initJson?.tusMetadata?.contentType || file.type || null,
         file,
         onProgress: (pct) =>
           setProgressMsg(`2/4 Đang upload file (resumable)... ${pct}%`),
