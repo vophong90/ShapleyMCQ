@@ -6,6 +6,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
@@ -121,11 +122,12 @@ export function useContextWizard() {
     return true;
   }
 
-  async function loadExistingLlosByLesson(
+ const loadExistingLlosByLesson = useCallback(
+  async (
     ownerId: string,
     courseId?: string | null,
     lessonId?: string | null
-  ) {
+  ) => {
     if (!courseId || !lessonId) {
       setExistingLlos([]);
       return;
@@ -151,7 +153,9 @@ export function useContextWizard() {
     }
 
     setLoadingExistingLlos(false);
-  }
+  },
+  [supabase]
+);
 
   // ===== INIT =====
 
