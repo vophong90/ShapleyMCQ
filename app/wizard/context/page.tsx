@@ -668,7 +668,7 @@ export default function ContextWizardPage() {
         state.lesson_id
       );
     } else {
-      setExistingLlos((prev) => prev.filter((l) => l.id !== lloId));
+      setExistingLlos((prev) => prev.filter((l) => l.llo_id !== lloId));
     }
 
     setMsg("Đã xóa LLO cùng AU/Mis/MCQ liên quan.");
