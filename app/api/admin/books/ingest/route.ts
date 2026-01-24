@@ -111,7 +111,7 @@ async function requireAdmin(req: NextRequest) {
   // Hỗ trợ cả 2 cột: role hoặc system_role (tùy app bạn đang dùng)
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("id, role, system_role")
+    .select("id, role")
     .eq("id", session.user.id)
     .maybeSingle();
 
