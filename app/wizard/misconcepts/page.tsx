@@ -114,7 +114,7 @@ export default function MisconceptWizard() {
     }
 
     init();
-  }, []);
+  }, [supabase]);
 
   // ==== 2. chọn course → load lessons ====
   async function handleSelectCourse(course: Course | null) {
