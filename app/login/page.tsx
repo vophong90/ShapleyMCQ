@@ -1,11 +1,13 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 export default function LoginPage() {
   const router = useRouter();
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -35,16 +37,13 @@ export default function LoginPage() {
     }
 
     setMsg("Đăng nhập thành công. Đang chuyển đến Dashboard…");
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 600);
+    router.push("/dashboard"); // ✅ không cần setTimeout
+    router.refresh(); // ✅ đảm bảo server routes thấy cookie mới
   }
 
   return (
     <div className="max-w-md mx-auto px-4 py-10">
-      <h1 className="text-2xl font-semibold text-slate-900 mb-2">
-        Đăng nhập
-      </h1>
+      <h1 className="text-2xl font-semibold text-slate-900 mb-2">Đăng nhập</h1>
       <p className="text-sm text-slate-600 mb-6">
         Sử dụng email và mật khẩu đã đăng ký để truy cập ShapleyMCQ Lab.
       </p>
@@ -93,7 +92,6 @@ export default function LoginPage() {
           {loading ? "Đang xử lý..." : "Đăng nhập"}
         </button>
 
-        {/* Link quên mật khẩu */}
         <p className="text-xs text-slate-600 mt-3">
           <a href="/forgot-password" className="text-brand-600 hover:underline">
             Quên mật khẩu?
