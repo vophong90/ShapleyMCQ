@@ -112,7 +112,7 @@ export default function MCQSimulateMultiPage() {
     }
 
     init();
-  }, []);
+  }, [supabase]);
 
   // helpers chỉnh card
   function updateCard(
