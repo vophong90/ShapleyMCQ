@@ -1,8 +1,9 @@
+// app/exam-blueprints/[blueprintId]/config/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Course = {
   id: string;
@@ -24,6 +25,9 @@ export default function BlueprintConfigPage({ params }: any) {
   const blueprintId = params.blueprintId;
   const router = useRouter();
 
+  // ✅ dùng supabase-browser.ts
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
+
   const [user, setUser] = useState<any>(null);
 
   const [courses, setCourses] = useState<Course[]>([]);
@@ -44,10 +48,18 @@ export default function BlueprintConfigPage({ params }: any) {
   // Load user
   // -------------------------------------------------------------
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    async function loadUser() {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) {
+        console.error(error);
+        return;
+      }
       if (data.user) setUser(data.user);
-    });
-  }, []);
+      setLoading(false);
+    }
+
+    loadUser();
+  }, [supabase]);
 
   // -------------------------------------------------------------
   // Load courses of this user via new API
@@ -112,6 +124,11 @@ export default function BlueprintConfigPage({ params }: any) {
   async function saveConfig() {
     if (Math.abs(totalPercent - 100) > 0.01) {
       alert("Tổng % phân bổ LLO phải bằng 100% trước khi lưu.");
+      return;
+    }
+
+    if (!courseId) {
+      alert("Bạn phải chọn học phần.");
       return;
     }
 
@@ -232,7 +249,7 @@ export default function BlueprintConfigPage({ params }: any) {
         <button
           onClick={saveConfig}
           disabled={saving}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-60"
         >
           {saving ? "Đang lưu..." : "Lưu cấu hình"}
         </button>
