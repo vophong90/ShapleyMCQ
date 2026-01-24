@@ -217,7 +217,8 @@ Nhiệm vụ (BƯỚC 2 – REVIEW & CHỈNH SỬA):
        - Rõ ràng, cụ thể,
        - Đủ "plausible" để dùng làm distractor,
        - Phản ánh một lỗi nhận thức/hiểu sai thật sự có thể xảy ra.
-   - Giữ số lượng hợp lý: 2–5 misconception cho mỗi AU sau khi lọc (xóa bớt nếu quá nhiều).
+   - Giữ số lượng hợp lý: **ÍT NHẤT 2 và TỐI ĐA 5 misconceptions cho mỗi AU sau khi lọc**
+     (nếu nhiều hơn 5 thì CHỌN 5 cái tốt nhất, sư phạm nhất).
 
 2) Kiểm tra tính "đúng sư phạm":
    - Misconception phải phản ánh rõ "thinking error" (không phải chỉ là câu mơ hồ).
@@ -329,9 +330,28 @@ ${genMisJson}
       );
     }
 
+    // ✅ Giới hạn TỐI ĐA 5 mis cho mỗi AU ở server
+const trimmedMis = finalMis.map((group: any) => {
+  const rawItems = Array.isArray(group.items) ? group.items : [];
+  // lọc những item hợp lệ có description không rỗng
+  const cleaned = rawItems
+    .filter(
+      (it: any) =>
+        it &&
+        typeof it.description === "string" &&
+        it.description.trim().length > 0
+    )
+    .slice(0, 5); // 👈 TỐI ĐA 5
+
+  return {
+    ...group,
+    items: cleaned,
+  };
+});
+
     // 🔚 Trả về đúng schema cũ, nhưng đã qua 2 bước: generate + pedagogy review
     return NextResponse.json(
-      { misconceptions: finalMis },
+      { misconceptions: trimmedMis },
       { status: 200 }
     );
   } catch (e: any) {
