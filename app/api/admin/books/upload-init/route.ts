@@ -64,7 +64,7 @@ async function requireAdmin(req: NextRequest) {
   const role = (profile as any).role ?? null;
 
   const isAdmin =
-    ["admin"].includes(String(role || "")) ||;
+    ["admin"].includes(String(role || ""));
 
   if (!isAdmin) {
     return {
