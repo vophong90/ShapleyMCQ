@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
@@ -12,8 +12,10 @@ type Profile = {
   role: string | null;
 };
 
+// ✅ Tạo supabase client dạng singleton ở module-level
+const supabase = getSupabaseBrowser();
+
 export function MainNav() {
-  const supabase = useMemo(() => getSupabaseBrowser(), []);
   const router = useRouter();
 
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -29,8 +31,9 @@ export function MainNav() {
         const { data, error } = await supabase.auth.getSession();
         const user = data?.session?.user;
 
+        if (!alive) return;
+
         if (error || !user) {
-          if (!alive) return;
           setProfile(null);
           setLoading(false);
           return;
@@ -51,7 +54,7 @@ export function MainNav() {
           setProfile(profileRow as Profile);
         }
       } catch (e) {
-        console.error(e);
+        console.error("Load profile error in MainNav:", e);
         if (!alive) return;
         setProfile(null);
       } finally {
@@ -59,17 +62,23 @@ export function MainNav() {
       }
     }
 
+    // ✅ chỉ chạy 1 lần khi NavBar mount
     loadProfile();
 
     return () => {
       alive = false;
     };
-  }, [supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 👈 không phụ thuộc supabase nữa
 
   const displayName = profile?.name || profile?.email || "";
 
   async function handleLogout() {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
     setProfile(null);
     setAccountOpen(false);
     router.push("/login");
