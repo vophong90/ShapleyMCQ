@@ -1,8 +1,9 @@
+// app/admin/items/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Profile = {
   id: string;
@@ -21,7 +22,6 @@ type MCQItemRow = {
   status?: string | null;
   specialty_id?: string | null;
   created_at?: string | null;
-  // các field meta tuỳ bạn đã khai báo
   nbme_meta?: any;
   edu_fit_meta?: any;
   shapley_meta?: any;
@@ -46,6 +46,7 @@ const BLOOM_LEVELS = [
 
 export default function AdminItemsPage() {
   const router = useRouter();
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
   const [loadingMe, setLoadingMe] = useState(true);
@@ -60,15 +61,16 @@ export default function AdminItemsPage() {
   const [selectedItem, setSelectedItem] = useState<MCQItemRow | null>(null);
   const [savingStatus, setSavingStatus] = useState(false);
 
-  // 1. Check session + admin role
+  // 1) Check user + admin role (client)
   useEffect(() => {
     (async () => {
       setLoadingMe(true);
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
 
-      if (!session) {
+      const { data, error: userErr } = await supabase.auth.getUser();
+      const user = data.user;
+
+      if (userErr || !user) {
+        setLoadingMe(false);
         router.replace("/login");
         return;
       }
@@ -76,33 +78,30 @@ export default function AdminItemsPage() {
       const { data: me, error } = await supabase
         .from("profiles")
         .select("id, email, name, role")
-        .eq("id", session.user.id)
+        .eq("id", user.id)
         .single();
 
-      setLoadingMe(false);
-
       if (error || !me) {
+        setLoadingMe(false);
         router.replace("/login");
         return;
       }
 
-      setCurrentProfile(me);
-
       if (me.role !== "admin") {
+        setLoadingMe(false);
         router.replace("/dashboard");
         return;
       }
+
+      setCurrentProfile(me as Profile);
+      setLoadingMe(false);
 
       loadItems("", "all", "all");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadItems(
-    q: string,
-    status: string,
-    bloom: string
-  ) {
+  async function loadItems(q: string, status: string, bloom: string) {
     setLoadingList(true);
     setSelectedItem(null);
 
@@ -113,17 +112,15 @@ export default function AdminItemsPage() {
 
     if (q.trim()) {
       const like = `%${q.trim()}%`;
-      // tuỳ schema, có thể thêm search theo explanation sau
       query = query.ilike("stem", like);
+      // nếu muốn: query = query.or(`stem.ilike.${like},explanation.ilike.${like}`);
     }
 
-    if (status !== "all") {
-      query = query.eq("status", status);
-    }
+    if (status !== "all") query = query.eq("status", status);
+    else query = query.not("status", "is", null);
 
-    if (bloom !== "all") {
-      query = query.eq("bloom_level", bloom);
-    }
+    if (bloom === "none") query = query.is("bloom_level", null);
+    else if (bloom !== "all") query = query.eq("bloom_level", bloom);
 
     const { data, error } = await query;
 
@@ -137,7 +134,7 @@ export default function AdminItemsPage() {
     setItems((data || []) as MCQItemRow[]);
   }
 
-  function filteredLabelStatus(item: MCQItemRow) {
+  function labelStatus(item: MCQItemRow) {
     const st = item.status || "draft";
     return STATUS_LABEL[st] || st;
   }
@@ -158,13 +155,11 @@ export default function AdminItemsPage() {
     }
 
     setItems((prev) =>
-      prev.map((x) =>
-        x.id === item.id ? { ...x, status: newStatus } : x
-      )
+      prev.map((x) => (x.id === item.id ? { ...x, status: newStatus } : x))
     );
 
     if (selectedItem?.id === item.id) {
-      setSelectedItem({ ...item, status: newStatus });
+      setSelectedItem((prev) => (prev ? { ...prev, status: newStatus } : prev));
     }
   }
 
@@ -174,12 +169,10 @@ export default function AdminItemsPage() {
     <div>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">
-            MCQ Bank – Quản lý câu hỏi
-          </h1>
+          <h1 className="text-2xl font-bold">MCQ Bank – Quản lý câu hỏi</h1>
           <p className="text-sm text-slate-500">
-            Xem, lọc và duyệt câu hỏi MCQ, kèm thông tin Bloom, trạng thái
-            và các chỉ số chất lượng.
+            Xem, lọc và duyệt câu hỏi MCQ, kèm thông tin Bloom, trạng thái và các
+            chỉ số chất lượng.
           </p>
         </div>
 
@@ -195,9 +188,7 @@ export default function AdminItemsPage() {
       </div>
 
       {loadingMe && (
-        <div className="text-sm text-slate-500">
-          Đang kiểm tra quyền…
-        </div>
+        <div className="text-sm text-slate-500">Đang kiểm tra quyền…</div>
       )}
 
       {!loadingMe && !canShow && (
@@ -216,9 +207,7 @@ export default function AdminItemsPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    loadItems(search, statusFilter, bloomFilter);
-                  }
+                  if (e.key === "Enter") loadItems(search, statusFilter, bloomFilter);
                 }}
                 placeholder="Tìm trong stem..."
                 className="border rounded-lg px-3 py-2 text-sm w-64"
@@ -227,8 +216,9 @@ export default function AdminItemsPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => {
-                  setStatusFilter(e.target.value);
-                  loadItems(search, e.target.value, bloomFilter);
+                  const v = e.target.value;
+                  setStatusFilter(v);
+                  loadItems(search, v, bloomFilter);
                 }}
                 className="border rounded-lg px-2 py-2 text-sm"
               >
@@ -242,8 +232,9 @@ export default function AdminItemsPage() {
               <select
                 value={bloomFilter}
                 onChange={(e) => {
-                  setBloomFilter(e.target.value);
-                  loadItems(search, statusFilter, e.target.value);
+                  const v = e.target.value;
+                  setBloomFilter(v);
+                  loadItems(search, statusFilter, v);
                 }}
                 className="border rounded-lg px-2 py-2 text-sm"
               >
@@ -253,6 +244,7 @@ export default function AdminItemsPage() {
                     {b}
                   </option>
                 ))}
+                <option value="none">(Không ghi Bloom)</option>
               </select>
 
               <button
@@ -268,27 +260,16 @@ export default function AdminItemsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-slate-100">
-                    <th className="px-2 py-2 border-b text-left w-12">
-                      #
-                    </th>
-                    <th className="px-2 py-2 border-b text-left">
-                      Stem
-                    </th>
-                    <th className="px-2 py-2 border-b text-left w-24">
-                      Bloom
-                    </th>
-                    <th className="px-2 py-2 border-b text-left w-28">
-                      Status
-                    </th>
+                    <th className="px-2 py-2 border-b text-left w-12">#</th>
+                    <th className="px-2 py-2 border-b text-left">Stem</th>
+                    <th className="px-2 py-2 border-b text-left w-24">Bloom</th>
+                    <th className="px-2 py-2 border-b text-left w-28">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loadingList && (
                     <tr>
-                      <td
-                        colSpan={4}
-                        className="px-3 py-3 text-slate-500 text-center"
-                      >
+                      <td colSpan={4} className="px-3 py-3 text-slate-500 text-center">
                         Đang tải danh sách câu hỏi...
                       </td>
                     </tr>
@@ -296,10 +277,7 @@ export default function AdminItemsPage() {
 
                   {!loadingList && items.length === 0 && (
                     <tr>
-                      <td
-                        colSpan={4}
-                        className="px-3 py-3 text-slate-500 text-center"
-                      >
+                      <td colSpan={4} className="px-3 py-3 text-slate-500 text-center">
                         Chưa có câu MCQ nào phù hợp bộ lọc.
                       </td>
                     </tr>
@@ -310,9 +288,7 @@ export default function AdminItemsPage() {
                       <tr
                         key={item.id}
                         className={`cursor-pointer hover:bg-slate-50 ${
-                          selectedItem?.id === item.id
-                            ? "bg-blue-50"
-                            : ""
+                          selectedItem?.id === item.id ? "bg-blue-50" : ""
                         }`}
                         onClick={() => setSelectedItem(item)}
                       >
@@ -320,15 +296,13 @@ export default function AdminItemsPage() {
                           {idx + 1}
                         </td>
                         <td className="px-2 py-2 border-t align-top">
-                          <div className="line-clamp-3">
-                            {item.stem}
-                          </div>
+                          <div className="line-clamp-3">{item.stem}</div>
                         </td>
                         <td className="px-2 py-2 border-t align-top text-xs">
                           {item.bloom_level || "-"}
                         </td>
                         <td className="px-2 py-2 border-t align-top text-xs">
-                          {filteredLabelStatus(item)}
+                          {labelStatus(item)}
                         </td>
                       </tr>
                     ))}
@@ -349,26 +323,18 @@ export default function AdminItemsPage() {
               <div className="h-full flex flex-col border rounded-xl bg-white p-4 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-xs text-slate-400 mb-1">
-                      ID: {selectedItem.id}
-                    </div>
-                    <h2 className="font-semibold mb-2">
-                      Stem
-                    </h2>
+                    <div className="text-xs text-slate-400 mb-1">ID: {selectedItem.id}</div>
+                    <h2 className="font-semibold mb-2">Stem</h2>
                     <p className="text-sm text-slate-900 whitespace-pre-wrap">
                       {selectedItem.stem}
                     </p>
                   </div>
 
                   <div className="min-w-[160px]">
-                    <div className="text-xs text-slate-500 mb-1">
-                      Trạng thái
-                    </div>
+                    <div className="text-xs text-slate-500 mb-1">Trạng thái</div>
                     <select
                       value={selectedItem.status || "draft"}
-                      onChange={(e) =>
-                        updateStatus(selectedItem, e.target.value)
-                      }
+                      onChange={(e) => updateStatus(selectedItem, e.target.value)}
                       disabled={savingStatus}
                       className="border rounded-lg px-2 py-1 text-sm w-full"
                     >
@@ -380,88 +346,57 @@ export default function AdminItemsPage() {
 
                     <div className="mt-3 text-xs text-slate-500">
                       Bloom:{" "}
-                      <span className="font-semibold">
-                        {selectedItem.bloom_level || "-"}
-                      </span>
+                      <span className="font-semibold">{selectedItem.bloom_level || "-"}</span>
                       <br />
                       Bậc học:{" "}
-                      <span className="font-semibold">
-                        {selectedItem.learner_level || "-"}
-                      </span>
+                      <span className="font-semibold">{selectedItem.learner_level || "-"}</span>
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <h3 className="font-semibold mb-1">
-                    Đáp án đúng
-                  </h3>
-                  <p className="text-sm text-emerald-700">
-                    {selectedItem.correct_answer}
-                  </p>
+                  <h3 className="font-semibold mb-1">Đáp án đúng</h3>
+                  <p className="text-sm text-emerald-700">{selectedItem.correct_answer}</p>
                 </div>
 
                 {selectedItem.explanation && (
                   <div>
-                    <h3 className="font-semibold mb-1">
-                      Giải thích
-                    </h3>
+                    <h3 className="font-semibold mb-1">Giải thích</h3>
                     <p className="text-sm text-slate-800 whitespace-pre-wrap">
                       {selectedItem.explanation}
                     </p>
                   </div>
                 )}
 
-                {/* Chỉ số chất lượng nếu bạn đã lưu meta vào JSON */}
                 {(selectedItem.nbme_meta ||
                   selectedItem.edu_fit_meta ||
                   selectedItem.shapley_meta) && (
                   <div className="border-t pt-3 space-y-2 text-xs">
-                    <h3 className="font-semibold">
-                      Chỉ số chất lượng (nếu có)
-                    </h3>
+                    <h3 className="font-semibold">Chỉ số chất lượng (nếu có)</h3>
 
                     {selectedItem.nbme_meta && (
                       <div className="border rounded-lg p-2 bg-slate-50">
-                        <div className="font-semibold mb-1">
-                          NBME / USMLE checks
-                        </div>
+                        <div className="font-semibold mb-1">NBME / USMLE checks</div>
                         <pre className="whitespace-pre-wrap">
-                          {JSON.stringify(
-                            selectedItem.nbme_meta,
-                            null,
-                            2
-                          )}
+                          {JSON.stringify(selectedItem.nbme_meta, null, 2)}
                         </pre>
                       </div>
                     )}
 
                     {selectedItem.edu_fit_meta && (
                       <div className="border rounded-lg p-2 bg-slate-50">
-                        <div className="font-semibold mb-1">
-                          Educational Fit
-                        </div>
+                        <div className="font-semibold mb-1">Educational Fit</div>
                         <pre className="whitespace-pre-wrap">
-                          {JSON.stringify(
-                            selectedItem.edu_fit_meta,
-                            null,
-                            2
-                          )}
+                          {JSON.stringify(selectedItem.edu_fit_meta, null, 2)}
                         </pre>
                       </div>
                     )}
 
                     {selectedItem.shapley_meta && (
                       <div className="border rounded-lg p-2 bg-slate-50">
-                        <div className="font-semibold mb-1">
-                          Shapley / Distractor Strength
-                        </div>
+                        <div className="font-semibold mb-1">Shapley / Distractor Strength</div>
                         <pre className="whitespace-pre-wrap">
-                          {JSON.stringify(
-                            selectedItem.shapley_meta,
-                            null,
-                            2
-                          )}
+                          {JSON.stringify(selectedItem.shapley_meta, null, 2)}
                         </pre>
                       </div>
                     )}
@@ -469,8 +404,8 @@ export default function AdminItemsPage() {
                 )}
 
                 <p className="mt-auto text-[11px] text-slate-400">
-                  Gợi ý: sau này ta có thể thêm nút “Xem chi tiết Shapley
-                  / Monte Carlo” mở sang tab wizard/simulate với MCQ này.
+                  Gợi ý: sau này ta có thể thêm nút “Xem chi tiết Shapley / Monte Carlo”
+                  mở sang tab wizard/simulate với MCQ này.
                 </p>
               </div>
             )}
