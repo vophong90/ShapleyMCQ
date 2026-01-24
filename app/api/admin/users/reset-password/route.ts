@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { getSupabaseServer } from "@/lib/supabaseServer";
+import { getRouteClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
