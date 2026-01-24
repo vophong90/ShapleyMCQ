@@ -34,7 +34,7 @@ export function MCQList({
   onSaveOneMCQ,
 }: Props) {
   return (
-    <div className="bg-white rounded-xl border shadow-sm flex flex-col overflow-hidden h-full min-h-[320px]">
+    <div className="bg-white rounded-xl border shadow-sm flex flex-col overflow-hidden h-full min-h-[320px] min-h-0">
       <div className="px-4 py-2 border-b text-sm font-semibold flex justify-between items-center">
         <span>Các câu MCQ sinh ra</span>
         {mcqs.length > 0 && (
@@ -45,7 +45,7 @@ export function MCQList({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {mcqs.length === 0 && (
           <div className="text-sm text-gray-500">
             • Chọn đầy đủ học phần – bài học – LLO – AU – Mis. <br />
