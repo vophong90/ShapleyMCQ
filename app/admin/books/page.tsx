@@ -2,7 +2,8 @@
 "use client";
 
 import { useEffect, useMemo, useState, ChangeEvent } from "react";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 
 type BookRow = {
   id: string;
