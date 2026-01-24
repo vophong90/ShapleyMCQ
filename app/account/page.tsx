@@ -1,7 +1,13 @@
 // app/account/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 /* =========================
@@ -96,7 +102,9 @@ export default function AccountPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("bank");
 
   // Shared selection giữa 2 tab
-  const [selectedMcqIds, setSelectedMcqIds] = useState<Set<string>>(() => new Set());
+  const [selectedMcqIds, setSelectedMcqIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   useEffect(() => {
     let alive = true;
@@ -165,7 +173,8 @@ export default function AccountPage() {
       <div className="max-w-5xl mx-auto px-4 py-8">
         <h1 className="text-xl font-semibold mb-2">Tài khoản</h1>
         <p className="text-sm text-slate-600">
-          Bạn cần đăng nhập để sử dụng chức năng Ngân hàng MCQ và Chia sẻ câu hỏi.
+          Bạn cần đăng nhập để sử dụng chức năng Ngân hàng MCQ và Chia sẻ câu
+          hỏi.
         </p>
       </div>
     );
@@ -181,7 +190,9 @@ export default function AccountPage() {
           </p>
         </div>
         <div className="text-right text-xs text-slate-500">
-          <div className="font-medium text-slate-700">{profile.name || profile.email}</div>
+          <div className="font-medium text-slate-700">
+            {profile.name || profile.email}
+          </div>
         </div>
       </header>
 
@@ -216,6 +227,7 @@ export default function AccountPage() {
           supabase={supabase}
           profileId={profile.id}
           selectedMcqIds={selectedMcqIds}
+          setSelectedMcqIds={setSelectedMcqIds}
           onToggleSelect={toggleSelectMcq}
           onClearSelection={clearSelection}
         />
@@ -239,6 +251,7 @@ type MyMcqBankTabProps = {
   supabase: ReturnType<typeof getSupabaseBrowser>;
   profileId: string;
   selectedMcqIds: Set<string>;
+  setSelectedMcqIds: Dispatch<SetStateAction<Set<string>>>;
   onToggleSelect: (id: string) => void;
   onClearSelection: () => void;
 };
@@ -247,6 +260,7 @@ function MyMcqBankTab({
   supabase,
   profileId,
   selectedMcqIds,
+  setSelectedMcqIds,
   onToggleSelect,
   onClearSelection,
 }: MyMcqBankTabProps) {
@@ -378,17 +392,44 @@ function MyMcqBankTab({
     return list;
   }, [mcqs, selectedCourseId, selectedLessonId, selectedLloId, searchStem, llos]);
 
+  // ====== Chọn tất cả / bỏ chọn tất cả các MCQ đang hiển thị ======
+  const visibleIds = useMemo(
+    () => filteredMcqs.map((m) => m.id),
+    [filteredMcqs]
+  );
+
+  const allVisibleSelected = useMemo(() => {
+    if (visibleIds.length === 0) return false;
+    return visibleIds.every((id) => selectedMcqIds.has(id));
+  }, [visibleIds, selectedMcqIds]);
+
+  function toggleSelectAllVisible() {
+    setSelectedMcqIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        // Bỏ chọn tất cả câu đang hiển thị
+        visibleIds.forEach((id) => next.delete(id));
+      } else {
+        // Chọn tất cả câu đang hiển thị
+        visibleIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  }
+
   async function handleExportWord() {
     setExportError(null);
 
-    if (filteredMcqs.length === 0) {
-      setExportError("Không có câu hỏi nào trong danh sách đang hiển thị để xuất.");
+    if (selectedMcqIds.size === 0) {
+      setExportError("Bạn chưa chọn câu MCQ nào để xuất.");
       return;
     }
 
     setExporting(true);
     try {
-      const mcqIds = filteredMcqs.map((m) => m.id);
+      // Lấy MCQ theo thứ tự toàn bộ danh sách (mcqs) nhưng chỉ giữ những câu đang được chọn
+      const selectedMcqs = mcqs.filter((m) => selectedMcqIds.has(m.id));
+      const mcqIds = selectedMcqs.map((m) => m.id);
 
       const { data: optionRows, error: optErr } = await supabase
         .from("mcq_options")
@@ -415,19 +456,23 @@ function MyMcqBankTab({
 <body>
 `;
 
-      filteredMcqs.forEach((m, idx) => {
+      selectedMcqs.forEach((m, idx) => {
         html += `<p><strong>Câu ${idx + 1}.</strong> ${escapeHtml(m.stem)}</p>\n`;
         const opts = optionsByMcq.get(m.id) || [];
         opts.forEach((opt) => {
           const text = `${opt.label}. ${escapeHtml(opt.text)}`;
-          html += opt.is_correct ? `<p><strong>${text}</strong></p>\n` : `<p>${text}</p>\n`;
+          html += opt.is_correct
+            ? `<p><strong>${text}</strong></p>\n`
+            : `<p>${text}</p>\n`;
         });
         html += `<p>&nbsp;</p>\n`;
       });
 
       html += `</body></html>`;
 
-      const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+      const blob = new Blob([html], {
+        type: "application/msword;charset=utf-8",
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -449,7 +494,9 @@ function MyMcqBankTab({
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold mb-3">Ngân hàng MCQ của tôi ({mcqs.length})</h2>
+        <h2 className="text-sm font-semibold mb-3">
+          Ngân hàng MCQ của tôi ({mcqs.length})
+        </h2>
 
         {/* Filters */}
         <div className="grid md:grid-cols-4 gap-3 mb-4 text-sm">
@@ -522,12 +569,20 @@ function MyMcqBankTab({
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs mb-2">
           <div className="text-slate-500">
-            Đang hiển thị <span className="font-semibold text-slate-700">{filteredMcqs.length}</span> câu hỏi.
+            Đang hiển thị{" "}
+            <span className="font-semibold text-slate-700">
+              {filteredMcqs.length}
+            </span>{" "}
+            câu hỏi.
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-slate-500">
-                Đã chọn <span className="font-semibold text-slate-700">{selectedCount}</span> câu để chia sẻ.
+                Đã chọn{" "}
+                <span className="font-semibold text-slate-700">
+                  {selectedCount}
+                </span>{" "}
+                câu.
               </span>
               {selectedCount > 0 && (
                 <button
@@ -542,29 +597,43 @@ function MyMcqBankTab({
             <button
               type="button"
               onClick={handleExportWord}
-              disabled={exporting || filteredMcqs.length === 0}
+              disabled={exporting || selectedMcqIds.size === 0}
               className="inline-flex items-center rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              {exporting ? "Đang xuất..." : "Xuất Word (theo bộ lọc)"}
+              {exporting ? "Đang xuất..." : "Xuất Word"}
             </button>
           </div>
         </div>
 
-        {exportError && <div className="mb-2 text-[11px] text-red-600">{exportError}</div>}
+        {exportError && (
+          <div className="mb-2 text-[11px] text-red-600">{exportError}</div>
+        )}
 
         {loading ? (
           <p className="text-sm text-slate-500">Đang tải MCQ...</p>
         ) : error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : filteredMcqs.length === 0 ? (
-          <p className="text-sm text-slate-500">Không có câu hỏi nào phù hợp bộ lọc hiện tại.</p>
+          <p className="text-sm text-slate-500">
+            Không có câu hỏi nào phù hợp bộ lọc hiện tại.
+          </p>
         ) : (
           <div className="border border-slate-100 rounded-xl max-h-[480px] overflow-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 sticky top-0 z-10">
                 <tr className="text-left text-slate-500">
                   <th className="py-2 pl-3 pr-2 w-8">
-                    <span className="sr-only">Chọn</span>
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      aria-label={
+                        allVisibleSelected
+                          ? "Bỏ chọn tất cả"
+                          : "Chọn tất cả"
+                      }
+                    />
                   </th>
                   <th className="py-2 pr-3">Stem</th>
                   <th className="py-2 pr-3 w-32">Học phần</th>
@@ -575,13 +644,18 @@ function MyMcqBankTab({
               <tbody>
                 {filteredMcqs.map((m) => {
                   const isSelected = selectedMcqIds.has(m.id);
-                  const course = m.course_id ? coursesById.get(m.course_id) : null;
-                  const firstLlo = (m.llo_ids && llosById.get(m.llo_ids[0])) || null;
+                  const course = m.course_id
+                    ? coursesById.get(m.course_id)
+                    : null;
+                  const firstLlo =
+                    (m.llo_ids && llosById.get(m.llo_ids[0])) || null;
 
                   return (
                     <tr
                       key={m.id}
-                      className={`border-t border-slate-100 ${isSelected ? "bg-emerald-50/40" : "bg-white"}`}
+                      className={`border-t border-slate-100 ${
+                        isSelected ? "bg-emerald-50/40" : "bg-white"
+                      }`}
                     >
                       <td className="py-2 pl-3 pr-2 align-top">
                         <input
@@ -592,15 +666,26 @@ function MyMcqBankTab({
                         />
                       </td>
                       <td className="py-2 pr-3 align-top">
-                        <div className="line-clamp-2 text-[11px] text-slate-800">{m.stem}</div>
+                        <div className="line-clamp-2 text-[11px] text-slate-800">
+                          {m.stem}
+                        </div>
                       </td>
                       <td className="py-2 pr-3 align-top text-[11px] text-slate-600">
-                        {course ? (course.code ? `${course.code}` : course.title) : "—"}
+                        {course
+                          ? course.code
+                            ? `${course.code}`
+                            : course.title
+                          : "—"}
                       </td>
                       <td className="py-2 pr-3 align-top text-[11px] text-slate-600">
-                        {firstLlo ? firstLlo.code || firstLlo.text.slice(0, 14) + "…" : "—"}
+                        {firstLlo
+                          ? firstLlo.code ||
+                            firstLlo.text.slice(0, 14) + "…"
+                          : "—"}
                       </td>
-                      <td className="py-2 pr-3 align-top text-[11px] text-slate-600">{m.status || "—"}</td>
+                      <td className="py-2 pr-3 align-top text-[11px] text-slate-600">
+                        {m.status || "—"}
+                      </td>
                     </tr>
                   );
                 })}
@@ -611,8 +696,9 @@ function MyMcqBankTab({
       </div>
 
       <p className="text-[11px] text-slate-500">
-        Gợi ý: Chọn các MCQ cần gửi, sau đó chuyển sang tab{" "}
-        <span className="font-semibold">“Chia sẻ / Nhận MCQ”</span> để nhập email đồng nghiệp và gửi.
+        Gợi ý: Chọn các MCQ cần gửi hoặc cần xuất Word, sau đó chuyển sang tab{" "}
+        <span className="font-semibold">“Chia sẻ / Nhận MCQ”</span> để nhập
+        email đồng nghiệp và gửi.
       </p>
     </div>
   );
@@ -629,7 +715,12 @@ type ShareReceiveTabProps = {
   onSharedSuccessfully: () => void;
 };
 
-function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessfully }: ShareReceiveTabProps) {
+function ShareReceiveTab({
+  supabase,
+  profile,
+  selectedMcqIds,
+  onSharedSuccessfully,
+}: ShareReceiveTabProps) {
   const [searchEmail, setSearchEmail] = useState("");
   const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [searching, setSearching] = useState(false);
@@ -666,22 +757,39 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
           return;
         }
 
-        const mcqIds = Array.from(new Set(rows.map((r: any) => r.mcq_item_id)));
-        const fromUserIds = Array.from(new Set(rows.map((r: any) => r.from_user_id)));
+        const mcqIds = Array.from(
+          new Set(rows.map((r: any) => r.mcq_item_id))
+        );
+        const fromUserIds = Array.from(
+          new Set(rows.map((r: any) => r.from_user_id))
+        );
 
-        const [{ data: mcqRows, error: mcqErr }, { data: userRows, error: userErr }] = await Promise.all([
+        const [
+          { data: mcqRows, error: mcqErr },
+          { data: userRows, error: userErr },
+        ] = await Promise.all([
           supabase.from("mcq_items").select("id, stem").in("id", mcqIds),
-          supabase.from("profiles").select("id, name, email").in("id", fromUserIds),
+          supabase
+            .from("profiles")
+            .select("id, name, email")
+            .in("id", fromUserIds),
         ]);
 
         if (mcqErr) throw mcqErr;
         if (userErr) throw userErr;
 
         const mcqMap = new Map<string, { id: string; stem: string }>();
-        (mcqRows || []).forEach((m: any) => mcqMap.set(m.id, { id: m.id, stem: m.stem }));
+        (mcqRows || []).forEach((m: any) =>
+          mcqMap.set(m.id, { id: m.id, stem: m.stem })
+        );
 
-        const userMap = new Map<string, { id: string; name: string | null; email: string | null }>();
-        (userRows || []).forEach((u: any) => userMap.set(u.id, { id: u.id, name: u.name, email: u.email }));
+        const userMap = new Map<
+          string,
+          { id: string; name: string | null; email: string | null }
+        >();
+        (userRows || []).forEach((u: any) =>
+          userMap.set(u.id, { id: u.id, name: u.name, email: u.email })
+        );
 
         const receivedList: ReceivedShare[] = rows.map((r: any) => {
           const mcq = mcqMap.get(r.mcq_item_id);
@@ -748,7 +856,8 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
 
     try {
       if (!selectedUser) throw new Error("Bạn chưa chọn người nhận.");
-      if (!selectedCount) throw new Error("Bạn chưa chọn câu hỏi nào trong Ngân hàng MCQ.");
+      if (!selectedCount)
+        throw new Error("Bạn chưa chọn câu hỏi nào trong Ngân hàng MCQ.");
 
       const mcqArray = Array.from(selectedMcqIds);
 
@@ -762,9 +871,15 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Lỗi khi chia sẻ MCQ (API).");
+      if (!res.ok)
+        throw new Error(data?.error || "Lỗi khi chia sẻ MCQ (API).");
 
-      setMessage(data?.message || `Đã gửi ${mcqArray.length} câu hỏi tới ${selectedUser.email || selectedUser.name}.`);
+      setMessage(
+        data?.message ||
+          `Đã gửi ${mcqArray.length} câu hỏi tới ${
+            selectedUser.email || selectedUser.name
+          }.`
+      );
       onSharedSuccessfully();
     } catch (e: any) {
       console.error(e);
@@ -781,8 +896,12 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
         <h2 className="text-sm font-semibold">Gửi MCQ cho đồng nghiệp</h2>
 
         <div className="text-xs text-slate-600 mb-1">
-          Bạn đang chọn <span className="font-semibold text-slate-800">{selectedCount}</span> câu trong Ngân hàng MCQ.
-          Chọn người nhận bằng email và nhấn <span className="font-semibold">Gửi MCQ</span>.
+          Bạn đang chọn{" "}
+          <span className="font-semibold text-slate-800">
+            {selectedCount}
+          </span>{" "}
+          câu trong Ngân hàng MCQ. Chọn người nhận bằng email và nhấn{" "}
+          <span className="font-semibold">Gửi MCQ</span>.
         </div>
 
         <div className="flex flex-col sm:flex-row gap-2 text-sm">
@@ -811,13 +930,21 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
                 <button
                   key={u.id}
                   type="button"
-                  onClick={() => setSelectedUser((prev) => (prev?.id === u.id ? null : u))}
+                  onClick={() =>
+                    setSelectedUser((prev) =>
+                      prev?.id === u.id ? null : u
+                    )
+                  }
                   className={`w-full text-left px-3 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 ${
                     isActive ? "bg-emerald-50/60" : ""
                   }`}
                 >
-                  <div className="font-medium text-slate-800">{u.name || u.email}</div>
-                  <div className="text-[11px] text-slate-500">{u.email}</div>
+                  <div className="font-medium text-slate-800">
+                    {u.name || u.email}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    {u.email}
+                  </div>
                 </button>
               );
             })}
@@ -828,9 +955,13 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
           <div className="text-slate-500">
             Người nhận:{" "}
             {selectedUser ? (
-              <span className="font-semibold text-slate-800">{selectedUser.name || selectedUser.email}</span>
+              <span className="font-semibold text-slate-800">
+                {selectedUser.name || selectedUser.email}
+              </span>
             ) : (
-              <span className="italic text-slate-400">chưa chọn người nhận</span>
+              <span className="italic text-slate-400">
+                chưa chọn người nhận
+              </span>
             )}
           </div>
           <button
@@ -843,18 +974,24 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
           </button>
         </div>
 
-        {message && <div className="text-xs text-emerald-600 mt-1">{message}</div>}
+        {message && (
+          <div className="text-xs text-emerald-600 mt-1">{message}</div>
+        )}
         {error && <div className="text-xs text-red-600 mt-1">{error}</div>}
       </div>
 
       {/* Received */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold mb-2">MCQ đồng nghiệp đã chia sẻ cho bạn</h2>
+        <h2 className="text-sm font-semibold mb-2">
+          MCQ đồng nghiệp đã chia sẻ cho bạn
+        </h2>
 
         {receivedLoading ? (
           <p className="text-sm text-slate-500">Đang tải...</p>
         ) : received.length === 0 ? (
-          <p className="text-sm text-slate-500">Chưa có câu hỏi nào được chia sẻ cho bạn.</p>
+          <p className="text-sm text-slate-500">
+            Chưa có câu hỏi nào được chia sẻ cho bạn.
+          </p>
         ) : (
           <div className="border border-slate-100 rounded-xl max-h-[360px] overflow-auto">
             <table className="min-w-full text-xs">
@@ -867,14 +1004,23 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
               </thead>
               <tbody>
                 {received.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 bg-white">
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 bg-white"
+                  >
                     <td className="py-2 pl-3 pr-2 align-top">
-                      <div className="line-clamp-2 text-[11px] text-slate-800">{r.mcq_stem}</div>
+                      <div className="line-clamp-2 text-[11px] text-slate-800">
+                        {r.mcq_stem}
+                      </div>
                     </td>
                     <td className="py-2 pr-2 align-top text-[11px] text-slate-600">
-                      <div>{r.from_user_name || r.from_user_email || "—"}</div>
+                      <div>
+                        {r.from_user_name || r.from_user_email || "—"}
+                      </div>
                       {r.from_user_email && r.from_user_name && (
-                        <div className="text-[10px] text-slate-400">{r.from_user_email}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {r.from_user_email}
+                        </div>
                       )}
                     </td>
                     <td className="py-2 pr-3 align-top text-[11px] text-slate-600">
@@ -888,8 +1034,8 @@ function ShareReceiveTab({ supabase, profile, selectedMcqIds, onSharedSuccessful
         )}
 
         <p className="mt-2 text-[11px] text-slate-500">
-          Các câu hỏi được chia sẻ cho bạn sẽ có thể dùng làm nguồn tạo đề thi trong mục{" "}
-          <span className="font-semibold">Khảo thí</span>.
+          Các câu hỏi được chia sẻ cho bạn sẽ có thể dùng làm nguồn tạo đề thi
+          trong mục <span className="font-semibold">Khảo thí</span>.
         </p>
       </div>
     </div>
