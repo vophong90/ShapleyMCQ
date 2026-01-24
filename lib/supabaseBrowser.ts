@@ -1,4 +1,4 @@
-// lib/supabase-browser.ts
+// lib/supabaseBrowser.ts
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 declare global {
