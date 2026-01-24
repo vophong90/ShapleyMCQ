@@ -24,7 +24,7 @@ function safeFileName(name: string) {
 
 async function requireAdmin() {
   // ✅ theo setup của bạn: getRouteClient() không nhận req
-  const supabase = getRouteClient();
+  const supabase = await getRouteClient();
 
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData?.user) {
