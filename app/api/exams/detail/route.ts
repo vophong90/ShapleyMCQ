@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRouteClient } from "@/lib/supabaseServer"; // ✅ đúng file server client của anh
+import { getRouteClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    const supabase = getRouteClient(req);
+    const supabase = await getRouteClient();
 
     // 1) Check login
     const {
@@ -34,7 +34,6 @@ export async function GET(req: NextRequest) {
       .single();
 
     if (examErr || !exam) {
-      // Nếu RLS chặn, thường trả về null/404-ish
       return NextResponse.json(
         { error: "Không tìm thấy đề thi hoặc bạn không có quyền xem." },
         { status: 404 }
@@ -42,12 +41,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 4) Load items + join mcq_items để lấy stem/options
-    // ⚠️ Giả định mcq_items có: stem, options_json
-    // Nếu schema anh dùng tên khác, chỉ cần đổi ở đây.
     const { data: rows, error: itemsErr } = await supabase
       .from("exam_mcq_items")
-      .select(
-        `
+      .select(`
         item_order,
         llo_id,
         mcq_item_id,
@@ -56,8 +52,7 @@ export async function GET(req: NextRequest) {
           stem,
           options_json
         )
-      `
-      )
+      `)
       .eq("exam_id", exam_id)
       .order("item_order", { ascending: true });
 
