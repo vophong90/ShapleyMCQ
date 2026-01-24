@@ -34,7 +34,7 @@ export function MCQList({
   onSaveOneMCQ,
 }: Props) {
   return (
-    <div className="bg-white rounded-xl border shadow-sm flex flex-col overflow-hidden">
+    <div className="bg-white rounded-xl border shadow-sm flex flex-col overflow-hidden h-full min-h-[320px]">
       <div className="px-4 py-2 border-b text-sm font-semibold flex justify-between items-center">
         <span>Các câu MCQ sinh ra</span>
         {mcqs.length > 0 && (
