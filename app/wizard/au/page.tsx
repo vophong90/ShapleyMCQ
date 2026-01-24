@@ -426,6 +426,12 @@ export default function AUPage() {
       setError("Vui lòng chọn LLO mục tiêu trước khi sinh AU.");
       return;
     }
+    
+    const selectedLlo = llos.find((l) => l.id === selectedLloId);
+    const bloomToUse =
+      selectedLlo?.bloom_suggested?.trim() ||
+      context.bloom_level?.trim() ||
+      null;
 
     const lloLines = getCurrentLloLines();
     if (lloLines.length === 0) {
@@ -459,8 +465,9 @@ export default function AUPage() {
 
       if (context.learner_level)
         formData.append("learner_level", context.learner_level);
-      if (context.bloom_level)
-        formData.append("bloom_level", context.bloom_level);
+      if (bloomToUse) {
+        formData.append("bloom_level", bloomToUse);
+      }
       if (context.specialty_name)
         formData.append("specialty_name", context.specialty_name);
       if (context.course_title) formData.append("course_title", context.course_title);
@@ -518,7 +525,7 @@ export default function AUPage() {
         mapped.push({
           core_statement: core,
           short_explanation: au.short_explanation ?? null,
-          bloom_min: au.bloom_min ?? null,
+          bloom_min: (au.bloom_min ?? null) || bloomToUse,
           selected: true,
         });
       }
