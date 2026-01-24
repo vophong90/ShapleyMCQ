@@ -13,7 +13,7 @@ function json(body: any, init?: ResponseInit) {
 const BOOKS_BUCKET = "books";
 
 /**
- * Admin check: đọc session cookie + profile.role/system_role
+ * Admin check: đọc session cookie + profile.role
  * Lưu ý: getRouteClient của bạn trả Promise => phải await
  */
 async function requireAdmin(req: NextRequest) {
@@ -32,7 +32,7 @@ async function requireAdmin(req: NextRequest) {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("id, role, system_role")
+    .select("id, role")
     .eq("id", userId)
     .maybeSingle();
 
@@ -41,12 +41,10 @@ async function requireAdmin(req: NextRequest) {
   }
 
   const role = (profile as any).role || null;
-  const systemRole = (profile as any).system_role || null;
 
   const isAdmin =
-    ["admin", "super_admin", "system_admin"].includes(String(role || "")) ||
-    ["admin", "super_admin", "system_admin"].includes(String(systemRole || ""));
-
+    ["admin"].includes(String(role || ""));
+  
   if (!isAdmin) return { ok: false, status: 403, error: "Admin only" as const };
 
   return { ok: true, user_id: userId };
