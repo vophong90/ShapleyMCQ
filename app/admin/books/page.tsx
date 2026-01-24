@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, ChangeEvent } from "react";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 type BookRow = {
   id: string;
@@ -17,12 +18,33 @@ const DEFAULT_BUCKET = "books";
 // Pagination
 const PAGE_SIZE = 10;
 
+function safeFileName(name: string) {
+  const base = (name || "file")
+    .replace(/[^\p{L}\p{N}\.\-_ ]/gu, "")
+    .trim()
+    .replace(/\s+/g, "_");
+  return base.slice(0, 180) || "file";
+}
+
+function getSupabaseBrowserClient(): SupabaseClient | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anon) return null;
+  return createClient(url, anon, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+}
+
 export default function AdminBooksPage() {
   const [loading, setLoading] = useState(true);
   const [list, setList] = useState<BookRow[]>([]);
   const [q, setQ] = useState("");
 
-  // create + upload + ingest (one flow)
+  // create + upload + attach DB + ingest (one flow)
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [specialtyName, setSpecialtyName] = useState("");
@@ -33,12 +55,14 @@ export default function AdminBooksPage() {
   // pagination state
   const [page, setPage] = useState(1);
 
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+
   async function loadBooks(keyword: string) {
     setLoading(true);
     const res = await fetch(
       "/api/admin/books/list?keyword=" + encodeURIComponent(keyword || "")
     );
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
     setLoading(false);
 
     if (!res.ok || json?.error) {
@@ -54,7 +78,7 @@ export default function AdminBooksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset page when list changes or query changes
+  // Reset page when query changes or list size changes
   useEffect(() => {
     setPage(1);
   }, [q, list.length]);
@@ -78,12 +102,18 @@ export default function AdminBooksPage() {
       alert("Chọn file trước.");
       return;
     }
+    if (!supabase) {
+      alert(
+        "Thiếu NEXT_PUBLIC_SUPABASE_URL hoặc NEXT_PUBLIC_SUPABASE_ANON_KEY (client không tạo được Supabase)."
+      );
+      return;
+    }
 
     setCreatingAll(true);
-    setProgressMsg("1/3 Đang tạo metadata...");
+    setProgressMsg("1/4 Đang tạo metadata...");
 
     try {
-      // 1) Create metadata
+      // 1) Create metadata (DB)
       const createRes = await fetch("/api/admin/books/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -95,11 +125,13 @@ export default function AdminBooksPage() {
         }),
       });
 
-      const createJson = await createRes.json();
+      const createJson = await createRes.json().catch(() => ({}));
 
       if (!createRes.ok || createJson?.error) {
         setProgressMsg(null);
-        alert("Tạo book thất bại: " + (createJson?.error || createRes.statusText));
+        alert(
+          "Tạo book thất bại: " + (createJson?.error || createRes.statusText)
+        );
         setCreatingAll(false);
         return;
       }
@@ -114,35 +146,56 @@ export default function AdminBooksPage() {
         return;
       }
 
-      // 2) Upload to Storage
-      setProgressMsg("2/3 Đang upload file lên Storage...");
+      // 2) Upload trực tiếp lên Storage (client) — tránh 413
+      setProgressMsg("2/4 Đang upload file lên Storage (client)...");
 
-      const form = new FormData();
-      form.append("book_id", bookId);
-      form.append("file", file);
-      form.append("overwrite", "true");
-      form.append("bucket", DEFAULT_BUCKET); // ✅ bucket bạn đã tạo
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const originalName = safeFileName(file.name || `${title.trim()}`);
+      const storage_path = `books/${bookId}/${ts}-${originalName}`;
 
-      const uploadRes = await fetch("/api/admin/books/upload", {
-        method: "POST",
-        body: form,
+      const up = await supabase.storage.from(DEFAULT_BUCKET).upload(storage_path, file, {
+        upsert: true,
+        contentType: file.type || "application/octet-stream",
       });
 
-      const uploadJson = await uploadRes.json();
+      if (up.error) {
+        setProgressMsg(null);
+        alert("Upload Storage thất bại: " + up.error.message);
+        setCreatingAll(false);
+        return;
+      }
 
-      if (!uploadRes.ok || uploadJson?.error) {
+      // 3) Gọi API upload (mới) để "attach" file vào DB: update storage_bucket/path + metadata
+      setProgressMsg("3/4 Đang cập nhật DB (storage_bucket/path + metadata)...");
+
+      const attachRes = await fetch("/api/admin/books/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          book_id: bookId,
+          storage_bucket: DEFAULT_BUCKET, // "books"
+          storage_path,
+          mime_type: file.type || null,
+          file_size: file.size || null,
+          // checksum_sha256: null, // nếu sau này bạn muốn tính thì bổ sung
+        }),
+      });
+
+      const attachJson = await attachRes.json().catch(() => ({}));
+
+      if (!attachRes.ok || attachJson?.error) {
         setProgressMsg(null);
         alert(
-          "Upload thất bại: " +
-            (uploadJson?.error || uploadRes.statusText) +
-            (uploadJson?.detail ? ` | ${uploadJson.detail}` : "")
+          "Cập nhật DB thất bại: " +
+            (attachJson?.error || attachRes.statusText) +
+            (attachJson?.detail ? ` | ${attachJson.detail}` : "")
         );
         setCreatingAll(false);
         return;
       }
 
-      // 3) Ingest
-      setProgressMsg("3/3 Đang ingest (tách đoạn + embedding + lưu chunks)...");
+      // 4) Ingest
+      setProgressMsg("4/4 Đang ingest (tách đoạn + embedding + lưu chunks)...");
 
       const ingestRes = await fetch("/api/admin/books/ingest", {
         method: "POST",
@@ -157,7 +210,7 @@ export default function AdminBooksPage() {
         }),
       });
 
-      const ingestJson = await ingestRes.json();
+      const ingestJson = await ingestRes.json().catch(() => ({}));
 
       if (!ingestRes.ok || ingestJson?.error) {
         setProgressMsg(null);
@@ -191,7 +244,10 @@ export default function AdminBooksPage() {
     }
   }
 
-  const canCreate = useMemo(() => !!title.trim() && !!file && !creatingAll, [title, file, creatingAll]);
+  const canCreate = useMemo(
+    () => !!title.trim() && !!file && !creatingAll,
+    [title, file, creatingAll]
+  );
 
   // Pagination derived
   const total = list.length;
@@ -206,14 +262,14 @@ export default function AdminBooksPage() {
       <div>
         <h2 className="text-lg font-bold text-slate-900">Books</h2>
         <p className="text-sm text-slate-600">
-          Tạo sách → upload Storage (bucket: <b>{DEFAULT_BUCKET}</b>) → ingest (chunks + embedding) chỉ bằng 1 nút.
+          1 nút: Tạo metadata → Upload thẳng Storage (bucket: <b>{DEFAULT_BUCKET}</b>) → API cập nhật DB → ingest.
         </p>
       </div>
 
-      {/* Create ALL: metadata + upload + ingest */}
+      {/* Create ALL: metadata + upload + attach DB + ingest */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-3">
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-          Tạo sách (tự chạy đủ 3 bước)
+          Tạo sách (tự chạy đủ)
         </div>
 
         <div className="grid md:grid-cols-2 gap-3">
@@ -289,7 +345,7 @@ export default function AdminBooksPage() {
         </div>
 
         <p className="text-[11px] text-slate-500">
-          Mặc định: overwrite upload = true, rebuild ingest = true, model = text-embedding-3-small, chunk=900 overlap=150.
+          Mặc định: upsert upload = true, rebuild ingest = true, model = text-embedding-3-small, chunk=900 overlap=150.
         </p>
       </div>
 
@@ -390,7 +446,7 @@ export default function AdminBooksPage() {
         </div>
 
         <p className="text-xs text-slate-500">
-          Bảng hiển thị: tên sách, chuyên ngành, trạng thái, ngày tạo.
+          Bảng chỉ hiển thị: tên sách, chuyên ngành, trạng thái, ngày tạo.
         </p>
       </div>
     </div>
