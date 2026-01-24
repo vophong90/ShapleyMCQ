@@ -69,7 +69,7 @@ type LloEvalResult = {
 
 // Row của VIEW v_llos_with_counts
 type ExistingLloRow = {
-  id: string;
+  llo_id: string;
   text: string;
   bloom_suggested: string | null;
   level_suggested: string | null;
@@ -264,9 +264,9 @@ export default function ContextWizardPage() {
     setLoadingExistingLlos(true);
 
     const { data, error } = await supabase
-      .from("v_llos_with_counts")
+      .from("v_llos_with_stats")
       .select(
-        "id, text, bloom_suggested, level_suggested, au_count, mis_count, mcq_count"
+        "llo_id, text, bloom_suggested, level_suggested, au_count, mis_count, mcq_count"
       )
       .eq("owner_id", ownerId)
       .eq("course_id", courseId)
@@ -1467,10 +1467,10 @@ export default function ContextWizardPage() {
           {existingLlos.length > 0 && (
             <div className="space-y-3">
               {existingLlos.map((row) => {
-                const isEditing = editingLloId === row.id;
+                const isEditing = editingLloId === row.llo_id;
                 return (
                   <div
-                    key={row.id}
+                    key={row.llo_id}
                     className="border border-slate-100 rounded-xl px-3 py-2.5 bg-slate-50/60 flex flex-col gap-2"
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -1529,7 +1529,7 @@ export default function ContextWizardPage() {
                             <button
                               type="button"
                               onClick={() => {
-                                setEditingLloId(row.id);
+                                setEditingLloId(row.llo_id);
                                 setEditLloText(row.text);
                                 setEditLloBloom(row.bloom_suggested || "");
                               }}
@@ -1540,7 +1540,7 @@ export default function ContextWizardPage() {
                             <button
                               type="button"
                               onClick={() =>
-                                handleDeleteExistingLlo(row.id, row.text)
+                                handleDeleteExistingLlo(row.llo_id, row.text)
                               }
                               className="px-2 py-1 rounded-lg bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100"
                             >
