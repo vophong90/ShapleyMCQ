@@ -31,38 +31,23 @@ async function uploadResumableToSupabase(params: {
   tusEndpoint: string;
   bucket: string;
   objectName: string;
-  token: string; // signed upload token (x-signature)
-  anonKey: string; // ✅ anon key
-  contentType?: string | null;
+  token: string;   // signed upload token (JWT) from createSignedUploadUrl
+  anonKey: string; // NEXT_PUBLIC_SUPABASE_ANON_KEY
   file: File;
   onProgress?: (pct: number) => void;
 }) {
-  const {
-    tusEndpoint,
-    bucket,
-    objectName,
-    token,
-    anonKey,
-    contentType,
-    file,
-    onProgress,
-  } = params;
-
-  const ct = contentType || file.type || "application/octet-stream";
+  const { tusEndpoint, bucket, objectName, token, anonKey, file, onProgress } = params;
 
   return new Promise<void>((resolve, reject) => {
     const upload = new tus.Upload(file, {
       endpoint: tusEndpoint,
       retryDelays: [0, 3000, 5000, 10000, 20000],
 
-      // ✅ ĐÚNG FLOW ANON + SIGNED TOKEN
+      // ✅ chuẩn Supabase Storage TUS signed upload
       headers: {
         apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
-        "x-signature": token,
+        Authorization: `Bearer ${token}`, // IMPORTANT: token (JWT), không phải anonKey
         "x-upsert": "true",
-        "x-content-type": ct,
-        "x-file-path": objectName,
       },
 
       uploadDataDuringCreation: true,
@@ -71,11 +56,10 @@ async function uploadResumableToSupabase(params: {
       metadata: {
         bucketName: bucket,
         objectName,
-        contentType: ct,
+        contentType: file.type || "application/octet-stream",
         cacheControl: "3600",
       },
 
-      // chunkSize 6MB ok
       chunkSize: 6 * 1024 * 1024,
 
       onError: (err) => reject(err),
