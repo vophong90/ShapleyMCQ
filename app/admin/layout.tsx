@@ -1,6 +1,7 @@
 // app/admin/layout.tsx
 import type { ReactNode } from "react";
 import AdminGuard from "./AdminGuard";
+import AdminShell from "./_components/AdminShell";
 
 export const metadata = {
   title: "Admin – ShapleyMCQ Lab",
@@ -9,9 +10,7 @@ export const metadata = {
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
     <AdminGuard>
-      <div className="max-w-6xl mx-auto px-4 py-6">
-        {children}
-      </div>
+      <AdminShell>{children}</AdminShell>
     </AdminGuard>
   );
 }
