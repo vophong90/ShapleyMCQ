@@ -1,6 +1,6 @@
 // app/api/admin/books/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminClient } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ type Body = {
 
 export async function POST(req: NextRequest) {
   try {
-    const supabaseAdmin = getAdminClient();
+    const supabaseAdmin = getSupabaseAdmin();
     const body = (await req.json()) as Body;
 
     const title = (body.title || "").trim();
