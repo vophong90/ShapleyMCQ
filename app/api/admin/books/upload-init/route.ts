@@ -48,7 +48,7 @@ async function requireAdmin(req: NextRequest) {
   const supabaseAdmin = getSupabaseAdmin();
   const { data: profile, error: profErr } = await supabaseAdmin
     .from("profiles")
-    .select("id, role, system_role")
+    .select("id, role")
     .eq("id", userId)
     .single();
 
@@ -62,18 +62,16 @@ async function requireAdmin(req: NextRequest) {
   }
 
   const role = (profile as any).role ?? null;
-  const systemRole = (profile as any).system_role ?? null;
 
   const isAdmin =
-    ["admin", "super_admin", "system_admin"].includes(String(role || "")) ||
-    ["admin", "super_admin", "system_admin"].includes(String(systemRole || ""));
+    ["admin"].includes(String(role || "")) ||;
 
   if (!isAdmin) {
     return {
       ok: false,
       status: 403,
       error: "Admin only" as const,
-      detail: { role, systemRole },
+      detail: { role },
     };
   }
 
