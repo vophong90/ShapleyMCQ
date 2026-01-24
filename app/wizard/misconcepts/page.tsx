@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Course = {
   id: string;
@@ -46,6 +46,7 @@ const STEP4_PATH = "/wizard/mcq"; // <-- nếu step 4 của bạn khác, sửa t
 
 export default function MisconceptWizard() {
   const router = useRouter();
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
