@@ -6,7 +6,8 @@ import { useEffect, useState, ChangeEvent } from "react";
 type BookRow = {
   id: string;
   title: string;
-  specialty_code: string | null;
+  specialty_id: string | null;
+  specialty_name: string | null;
   status: string | null;
   created_at: string | null;
 };
@@ -19,11 +20,13 @@ export default function AdminBooksPage() {
   // upload stub
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
-  const [specialtyCode, setSpecialtyCode] = useState("");
+  const [specialtyName, setSpecialtyName] = useState("");
 
   async function loadBooks(keyword: string) {
     setLoading(true);
-    const res = await fetch("/api/admin/books/list?keyword=" + encodeURIComponent(keyword || ""));
+    const res = await fetch(
+      "/api/admin/books/list?keyword=" + encodeURIComponent(keyword || "")
+    );
     const json = await res.json();
     setLoading(false);
 
@@ -32,7 +35,7 @@ export default function AdminBooksPage() {
       return;
     }
 
-    setList(json?.data || []);
+    setList((json?.data || []) as BookRow[]);
   }
 
   useEffect(() => {
@@ -55,15 +58,19 @@ export default function AdminBooksPage() {
       return;
     }
 
+    // ✅ KHỚP schema public.books:
+    // - title
+    // - specialty_name (tạm nhập tay; specialty_id sẽ làm sau nếu có bảng specialties)
+    // - mime_type
+    // - file_size
     const res = await fetch("/api/admin/books/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: title.trim(),
-        specialty_code: specialtyCode.trim() || null,
-        original_filename: file.name,
+        specialty_name: specialtyName.trim() || null,
         mime_type: file.type || null,
-        size_bytes: file.size || null,
+        file_size: file.size || null,
       }),
     });
 
@@ -74,9 +81,9 @@ export default function AdminBooksPage() {
       return;
     }
 
-    alert("Đã tạo book metadata. (Bước upload storage sẽ làm tiếp ở patch sau)");
+    alert("Đã tạo book metadata. (Bước upload storage + ingest sẽ làm tiếp)");
     setTitle("");
-    setSpecialtyCode("");
+    setSpecialtyName("");
     setFile(null);
 
     await loadBooks(q);
@@ -87,7 +94,8 @@ export default function AdminBooksPage() {
       <div>
         <h2 className="text-lg font-bold text-slate-900">Books</h2>
         <p className="text-sm text-slate-600">
-          Quản lý sách/giáo trình để dùng cho Option 3 (RAG/ingest). Patch này tạo khung UI + API stub.
+          Quản lý sách/giáo trình để dùng cho Option 3 (ingest/RAG). Trang này
+          hiện chỉ tạo metadata (stub), chưa upload Storage.
         </p>
       </div>
 
@@ -112,13 +120,13 @@ export default function AdminBooksPage() {
 
           <div>
             <label className="block text-[11px] font-medium text-slate-600 mb-1">
-              Specialty code (tuỳ chọn)
+              Specialty name (tuỳ chọn)
             </label>
             <input
-              value={specialtyCode}
-              onChange={(e) => setSpecialtyCode(e.target.value)}
+              value={specialtyName}
+              onChange={(e) => setSpecialtyName(e.target.value)}
               className="w-full border rounded-lg px-3 py-2 text-sm"
-              placeholder="VD: YHCT_NOIKHOA"
+              placeholder="VD: Da liễu / Nội khoa / Nhi khoa..."
             />
           </div>
         </div>
@@ -139,9 +147,16 @@ export default function AdminBooksPage() {
           />
           {file && (
             <div className="mt-1 text-xs text-slate-600">
-              Đã chọn: <span className="font-semibold">{file.name}</span> ({(file.size / 1024).toFixed(1)} KB)
+              Đã chọn:{" "}
+              <span className="font-semibold">{file.name}</span>{" "}
+              ({(file.size / 1024).toFixed(1)} KB)
             </div>
           )}
+          <p className="mt-1 text-[11px] text-slate-500">
+            Hiện tại file chỉ dùng để lấy mime_type + file_size khi tạo metadata.
+            Patch tiếp theo sẽ upload lên Storage (storage_bucket/storage_path)
+            và chạy ingest.
+          </p>
         </div>
 
         <div className="flex justify-end">
@@ -174,7 +189,8 @@ export default function AdminBooksPage() {
           </button>
           <div className="flex-1" />
           <div className="text-xs text-slate-500">
-            Tổng: <span className="font-semibold text-slate-900">{list.length}</span>
+            Tổng:{" "}
+            <span className="font-semibold text-slate-900">{list.length}</span>
           </div>
         </div>
 
@@ -183,7 +199,7 @@ export default function AdminBooksPage() {
             <thead>
               <tr className="bg-slate-100">
                 <th className="px-3 py-2 border-b text-left">Title</th>
-                <th className="px-3 py-2 border-b text-left w-48">Specialty</th>
+                <th className="px-3 py-2 border-b text-left w-56">Specialty</th>
                 <th className="px-3 py-2 border-b text-left w-32">Status</th>
                 <th className="px-3 py-2 border-b text-left w-44">Created</th>
               </tr>
@@ -212,7 +228,9 @@ export default function AdminBooksPage() {
                       <div className="font-semibold text-slate-900">{b.title}</div>
                       <div className="text-[11px] text-slate-500">{b.id}</div>
                     </td>
-                    <td className="px-3 py-2 border-t">{b.specialty_code || "—"}</td>
+                    <td className="px-3 py-2 border-t">
+                      {b.specialty_name || b.specialty_id || "—"}
+                    </td>
                     <td className="px-3 py-2 border-t">{b.status || "draft"}</td>
                     <td className="px-3 py-2 border-t">
                       {b.created_at ? new Date(b.created_at).toLocaleString() : "—"}
@@ -224,7 +242,8 @@ export default function AdminBooksPage() {
         </div>
 
         <p className="text-xs text-slate-500">
-          Patch tiếp theo: upload lên Storage + ingest pipeline + status.
+          Patch tiếp theo: upload lên Storage (storage_bucket/storage_path) + ingest
+          pipeline (book_ingest_jobs, book_chunks) + cập nhật status/chunk_count.
         </p>
       </div>
     </div>
