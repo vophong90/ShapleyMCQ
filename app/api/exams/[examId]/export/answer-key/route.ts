@@ -14,10 +14,10 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { examId: string } }
-) {
+  context: { params: Record<string, string> }
+  ) {
+  const examId = context.params.examId;
   const supabase = getSupabaseAdmin();
-  const examId = params.examId;
 
   try {
     /* ---------------------------------------
