@@ -272,16 +272,20 @@ export default function ExamBlueprintDetailPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Khảo thí – {blueprint.title}</h1>
+          <h1 className="text-2xl font-semibold">
+            Khảo thí – {blueprint.title}
+          </h1>
           {blueprint.description && (
-            <p className="text-sm text-slate-600 mt-1">{blueprint.description}</p>
+            <p className="text-sm text-slate-600 mt-1">
+              {blueprint.description}
+            </p>
           )}
         </div>
 
         <div className="flex gap-2">
           <Link
             href={`/exam-blueprints/${blueprint.id}/config`}
-            className="px-3 py-2 rounded border text-sm"
+            className="px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:bg-slate-50"
           >
             Cấu hình Blueprint
           </Link>
@@ -289,7 +293,7 @@ export default function ExamBlueprintDetailPage() {
           <button
             onClick={handleGenerateExam}
             disabled={!canGenerate || generating}
-            className="px-4 py-2 rounded bg-emerald-600 text-white text-sm disabled:opacity-60"
+            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm disabled:opacity-60"
           >
             {generating ? "Đang tạo…" : "Tạo version mới"}
           </button>
@@ -297,8 +301,8 @@ export default function ExamBlueprintDetailPage() {
       </div>
 
       {/* Versions */}
-      <div className="border rounded-lg">
-        <div className="p-4 border-b">
+      <div className="border rounded-xl bg-white shadow-sm overflow-hidden">
+        <div className="p-4 border-b bg-slate-50">
           <div className="font-semibold">Danh sách Version</div>
           <div className="text-xs text-slate-500 mt-1">
             Mỗi version là một đề. Bạn có thể xuất Word hoặc vào “Phân tích đề”.
@@ -316,7 +320,7 @@ export default function ExamBlueprintDetailPage() {
               const statsLoading = statsLoadingExamId === v.id;
 
               return (
-                <div key={v.id} className="p-4">
+                <div key={v.id} className="p-4 hover:bg-slate-50/60 transition-colors">
                   {/* Row */}
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div className="min-w-0">
@@ -338,28 +342,28 @@ export default function ExamBlueprintDetailPage() {
                     <div className="flex flex-wrap gap-2 md:justify-end">
                       <Link
                         href={`/exams/${v.id}`}
-                        className="px-3 py-1 rounded text-sm bg-slate-900 text-white"
+                        className="px-3 py-1 rounded-lg text-sm bg-slate-900 hover:bg-slate-800 text-white"
                       >
                         Phân tích đề
                       </Link>
 
                       <a
                         href={`/api/exams/${v.id}/export/question-paper`}
-                        className="px-3 py-1 border rounded text-sm"
+                        className="px-3 py-1 rounded-lg border border-slate-300 text-sm text-slate-700 hover:bg-slate-50"
                       >
                         Xuất đề
                       </a>
 
                       <a
                         href={`/api/exams/${v.id}/export/answer-key`}
-                        className="px-3 py-1 border rounded text-sm"
+                        className="px-3 py-1 rounded-lg border border-slate-300 text-sm text-slate-700 hover:bg-slate-50"
                       >
                         Xuất đáp án
                       </a>
 
                       <button
                         onClick={() => handleDeleteVersion(v.id)}
-                        className="px-3 py-1 border rounded text-sm text-red-600"
+                        className="px-3 py-1 rounded-lg border border-red-200 text-sm text-red-600 hover:bg-red-50"
                       >
                         Xoá
                       </button>
@@ -373,7 +377,7 @@ export default function ExamBlueprintDetailPage() {
                             await loadBloomStats(v.id);
                           }
                         }}
-                        className="px-3 py-1 border rounded text-sm"
+                        className="px-3 py-1 rounded-lg border border-slate-300 text-sm text-slate-700 hover:bg-slate-50"
                       >
                         {expanded ? "Ẩn thống kê" : "Xem thống kê"}
                       </button>
@@ -382,7 +386,7 @@ export default function ExamBlueprintDetailPage() {
 
                   {/* Expanded stats */}
                   {expanded && (
-                    <div className="mt-4 rounded-lg border bg-slate-50 p-4">
+                    <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
                       {statsLoading ? (
                         <div className="text-sm text-slate-500">
                           Đang tải thống kê Bloom…
