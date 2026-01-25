@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
@@ -44,6 +44,7 @@ type ExamVersion = {
   id: string;
   version_no: number;
   created_at: string;
+  title?: string | null;
 };
 
 type BloomStat = {
@@ -82,10 +83,7 @@ function BloomDonutChart({ data }: { data: BloomStat[] }) {
             paddingAngle={3}
           >
             {data.map((_, i) => (
-              <Cell
-                key={i}
-                fill={BLOOM_COLORS[i % BLOOM_COLORS.length]}
-              />
+              <Cell key={i} fill={BLOOM_COLORS[i % BLOOM_COLORS.length]} />
             ))}
           </Pie>
           <Tooltip formatter={(v: any) => `${v.toFixed(1)}%`} />
@@ -101,7 +99,6 @@ function BloomDonutChart({ data }: { data: BloomStat[] }) {
 export default function ExamBlueprintDetailPage() {
   const params = useParams();
   const blueprintId = params?.blueprintId as string;
-
   const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   const [loading, setLoading] = useState(true);
@@ -110,11 +107,9 @@ export default function ExamBlueprintDetailPage() {
 
   const [blueprint, setBlueprint] = useState<ExamBlueprint | null>(null);
 
-  // Danh sách versions
   const [examVersions, setExamVersions] = useState<ExamVersion[]>([]);
   const [selectedExam, setSelectedExam] = useState<ExamVersion | null>(null);
 
-  // Stats theo version đang chọn
   const [bloomStats, setBloomStats] = useState<BloomStat[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
 
@@ -124,20 +119,17 @@ export default function ExamBlueprintDetailPage() {
     async function loadBlueprint() {
       setLoading(true);
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user) throw new Error("Chưa đăng nhập");
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) throw new Error("Chưa đăng nhập");
 
-        const { data, error } = await supabase
+        const { data: bp, error } = await supabase
           .from("exam_blueprints")
           .select("id, title, description, owner_id, config")
           .eq("id", blueprintId)
           .single();
 
-        if (error || !data) throw error;
-
-        setBlueprint(data as ExamBlueprint);
+        if (error || !bp) throw error;
+        setBlueprint(bp as ExamBlueprint);
       } catch (e: any) {
         setError(e.message || "Không tải được blueprint");
       } finally {
@@ -148,44 +140,46 @@ export default function ExamBlueprintDetailPage() {
     if (blueprintId) loadBlueprint();
   }, [blueprintId, supabase]);
 
-  /* ================= LOAD EXAM VERSIONS ================= */
-
-  async function loadExamVersions(autoSelectNewest = false) {
-    const { data, error } = await supabase
-      .from("exams")
-      .select("id, version_no, created_at")
-      .eq("blueprint_id", blueprintId)
-      .order("version_no", { ascending: false });
-
-    if (!error) {
-      setExamVersions(data || []);
-      if (autoSelectNewest && data?.length) {
-        setSelectedExam(data[0]);
-        loadBloomStats(data[0].id);
-      }
-    }
-  }
-
-  useEffect(() => {
-    if (blueprintId) loadExamVersions();
-  }, [blueprintId]);
-
   /* ================= LOAD BLOOM STATS ================= */
 
-  async function loadBloomStats(examId: string) {
+  const loadBloomStats = useCallback(async (examId: string) => {
     const res = await fetch(`/api/exams/${examId}/bloom-stats`);
     const json = await res.json();
     if (json.success) {
       setBloomStats(json.bloom_stats || []);
       setWarnings(json.warnings || []);
     }
-  }
+  }, []);
+
+  /* ================= LOAD EXAM VERSIONS ================= */
+
+  const loadExamVersions = useCallback(
+    async (autoSelectNewest = false) => {
+      const { data, error } = await supabase
+        .from("exams")
+        .select("id, version_no, created_at, title")
+        .eq("blueprint_id", blueprintId)
+        .order("version_no", { ascending: false });
+
+      if (!error) {
+        setExamVersions(data || []);
+        if (autoSelectNewest && data?.length) {
+          setSelectedExam(data[0]);
+          loadBloomStats(data[0].id);
+        }
+      }
+    },
+    [blueprintId, supabase, loadBloomStats]
+  );
+
+  useEffect(() => {
+    if (blueprintId) loadExamVersions();
+  }, [blueprintId, loadExamVersions]);
 
   /* ================= GENERATE EXAM ================= */
 
   async function handleGenerateExam() {
     if (!blueprint) return;
-
     setGenerating(true);
     setError(null);
 
@@ -199,13 +193,30 @@ export default function ExamBlueprintDetailPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generate thất bại");
 
-      // Reload list và auto select version mới nhất
-      await loadExamVersions(true);
+      await loadExamVersions(true); // auto select version mới nhất
     } catch (e: any) {
       setError(e.message || "Lỗi khi tạo đề");
     } finally {
       setGenerating(false);
     }
+  }
+
+  /* ================= DELETE VERSION ================= */
+
+  async function handleDeleteVersion(examId: string) {
+    if (!confirm("Bạn chắc chắn muốn xoá version đề này?")) return;
+
+    const res = await fetch(`/api/exams/${examId}`, { method: "DELETE" });
+    const json = await res.json();
+    if (!json.success) {
+      alert(json.error || "Xoá thất bại");
+      return;
+    }
+
+    setSelectedExam(null);
+    setBloomStats([]);
+    setWarnings([]);
+    await loadExamVersions();
   }
 
   /* ================= RENDER ================= */
@@ -220,16 +231,13 @@ export default function ExamBlueprintDetailPage() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
-      {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-semibold">
             Khảo thí – {blueprint.title}
           </h1>
           {blueprint.description && (
-            <p className="text-sm text-slate-600">
-              {blueprint.description}
-            </p>
+            <p className="text-sm text-slate-600">{blueprint.description}</p>
           )}
         </div>
 
@@ -251,7 +259,7 @@ export default function ExamBlueprintDetailPage() {
         </div>
       </div>
 
-      {/* VERSION LIST */}
+      {/* VERSION LIST + DETAIL */}
       <div className="grid md:grid-cols-3 gap-6">
         <div className="border rounded-lg p-4">
           <h2 className="font-semibold mb-2">Danh sách Version</h2>
@@ -265,32 +273,32 @@ export default function ExamBlueprintDetailPage() {
                 }}
                 className={`p-2 rounded border cursor-pointer ${
                   selectedExam?.id === v.id
-                    ? "border-brand-600 bg-brand-50"
+                    ? "border-emerald-500 bg-emerald-50"
                     : ""
                 }`}
               >
-                <div className="font-medium">
-                  Version {v.version_no}
-                </div>
+                <div className="font-medium">Version {v.version_no}</div>
                 <div className="text-xs text-slate-500">
                   {new Date(v.created_at).toLocaleString("vi-VN")}
                 </div>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteVersion(v.id);
+                  }}
+                  className="text-xs text-red-600 mt-1"
+                >
+                  Xoá version
+                </button>
               </div>
             ))}
-            {!examVersions.length && (
-              <p className="text-xs text-slate-500">
-                Chưa có version nào.
-              </p>
-            )}
           </div>
         </div>
 
-        {/* VERSION DETAIL */}
         <div className="md:col-span-2 border rounded-lg p-4">
           {!selectedExam ? (
-            <p className="text-slate-500">
-              Chọn một version để xem chi tiết.
-            </p>
+            <p className="text-slate-500">Chọn một version để xem chi tiết.</p>
           ) : (
             <>
               <div className="flex justify-between mb-3">
