@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { getRouteClient } from "@/lib/supabaseServer";
 
 /* ---------------- TYPES ---------------- */
 
@@ -66,18 +67,18 @@ function shuffleArraySeeded<T>(arr: T[], rng: () => number): T[] {
 /* ---------------- MAIN HANDLER ---------------- */
 
 export async function POST(req: NextRequest) {
+  // ✅ admin dùng cho DB
   const supabase = getSupabaseAdmin();
 
   try {
     /* --------------------------------------------------
-       1. Auth: dùng Supabase session, KHÔNG tin userId tự gửi
+       1. Auth: lấy user từ cookie/session của request
     -------------------------------------------------- */
+    const authClient = getRouteClient(req);
     const {
       data: { user },
       error: authErr,
-    } = await supabase.auth.getUser(
-      req.headers.get("Authorization")?.replace("Bearer ", "") || ""
-    );
+    } = await authClient.auth.getUser();
 
     if (authErr || !user) {
       return NextResponse.json(
@@ -177,6 +178,11 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .single();
 
+    if (vErr && vErr.code !== "PGRST116") {
+      // PGRST116 thường là "No rows" khi .single() mà không có record
+      throw vErr;
+    }
+
     const nextVersionNo = (lastVersionRow?.version_no || 0) + 1;
 
     /* --------------------------------------------------
@@ -250,7 +256,7 @@ export async function POST(req: NextRequest) {
 
       if (sharedErr) throw sharedErr;
       (shared || []).forEach((row: any) => {
-        const mcq = row.mcq_items;
+        const mcq = (row as any).mcq_items;
         if (!mcq) return;
         addToPool(mcq.id, mcq.llo_ids || null);
       });
@@ -287,10 +293,7 @@ export async function POST(req: NextRequest) {
       const needed = countsByLlo[lloId] || 0;
       if (!needed) continue;
 
-      const available = shuffleArraySeeded(
-        poolMap.get(lloId) || [],
-        rng
-      );
+      const available = shuffleArraySeeded(poolMap.get(lloId) || [], rng);
 
       let picked = 0;
       for (const mcqId of available) {
@@ -362,13 +365,8 @@ export async function POST(req: NextRequest) {
       item_order: idx + 1,
     }));
 
-    const { error: itemsErr } = await supabase
-      .from("exam_mcq_items")
-      .insert(payload);
-
-    if (itemsErr) {
-      throw itemsErr;
-    }
+    const { error: itemsErr } = await supabase.from("exam_mcq_items").insert(payload);
+    if (itemsErr) throw itemsErr;
 
     /* --------------------------------------------------
        13. Tính Bloom stats (dựa vào LLO)
@@ -432,7 +430,7 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     console.error("Error in /api/exams/generate:", e);
     return NextResponse.json(
-      { error: e.message || "Lỗi không xác định" },
+      { error: e?.message || "Lỗi không xác định" },
       { status: 500 }
     );
   }
