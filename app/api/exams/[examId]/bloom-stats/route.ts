@@ -16,12 +16,9 @@ function normalizeBloom(v: any) {
   return s || "";
 }
 
-export async function GET(
-  _req: Request,
-  { params }: { params: { examId: string } }
-) {
+export async function GET(request: Request, context: any) {
   try {
-    const examId = params?.examId;
+    const examId: string | undefined = context?.params?.examId;
     if (!examId) {
       return NextResponse.json(
         { success: false, error: "Thiếu examId" },
@@ -46,11 +43,6 @@ export async function GET(
       );
     }
 
-    /**
-     * Join:
-     * exam_mcq_items.mcq_item_id -> mcq_items.id
-     * Lấy bloom_level (ưu tiên), fallback target_bloom
-     */
     const { data, error } = await supabase
       .from("exam_mcq_items")
       .select(
@@ -88,7 +80,6 @@ export async function GET(
 
       const bloomLevel = normalizeBloom(r?.mcq_items?.bloom_level);
       const targetBloom = normalizeBloom(r?.mcq_items?.target_bloom);
-
       const bloom = bloomLevel || targetBloom;
 
       if (!bloom) {
@@ -98,7 +89,6 @@ export async function GET(
       }
 
       if (!bloomLevel && targetBloom) usedTargetBloomFallback++;
-
       counts[bloom] = (counts[bloom] || 0) + 1;
     }
 
@@ -112,14 +102,16 @@ export async function GET(
 
     const warnings: string[] = [];
     if (total === 0) warnings.push("Đề này chưa có câu hỏi để thống kê Bloom.");
-    if (missingBloom > 0)
+    if (missingBloom > 0) {
       warnings.push(
         `${missingBloom}/${total} câu chưa có bloom_level/target_bloom → tính vào 'Unknown'.`
       );
-    if (usedTargetBloomFallback > 0)
+    }
+    if (usedTargetBloomFallback > 0) {
       warnings.push(
         `${usedTargetBloomFallback}/${total} câu không có bloom_level, đã fallback sang target_bloom.`
       );
+    }
 
     return NextResponse.json({
       success: true,
