@@ -1,3 +1,4 @@
+// app/api/exams/detail/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getRouteClient } from "@/lib/supabaseServer";
 
@@ -16,17 +17,23 @@ export async function GET(req: NextRequest) {
 
     if (userErr) throw userErr;
     if (!user) {
-      return NextResponse.json({ error: "Bạn cần đăng nhập." }, { status: 401 });
+      return NextResponse.json(
+        { error: "Bạn cần đăng nhập." },
+        { status: 401 }
+      );
     }
 
     // 2) Get exam_id
     const { searchParams } = new URL(req.url);
     const exam_id = searchParams.get("exam_id");
     if (!exam_id) {
-      return NextResponse.json({ error: "exam_id là bắt buộc" }, { status: 400 });
+      return NextResponse.json(
+        { error: "exam_id là bắt buộc" },
+        { status: 400 }
+      );
     }
 
-    // 3) Load exam (RLS sẽ tự chặn nếu không phải owner)
+    // 3) Load exam (RLS sẽ tự chặn nếu không phải owner / không có quyền)
     const { data: exam, error: examErr } = await supabase
       .from("exams")
       .select("id, title, blueprint_id, owner_id, course_id, created_at")
@@ -40,19 +47,20 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // 4) Load items + join mcq_items để lấy stem/options
+    // 4) Load items + join mcq_items để lấy stem
     const { data: rows, error: itemsErr } = await supabase
       .from("exam_mcq_items")
-      .select(`
+      .select(
+        `
         item_order,
         llo_id,
         mcq_item_id,
         mcq_items (
           id,
-          stem,
-          options_json
+          stem
         )
-      `)
+      `
+      )
       .eq("exam_id", exam_id)
       .order("item_order", { ascending: true });
 
@@ -63,7 +71,8 @@ export async function GET(req: NextRequest) {
       llo_id: r.llo_id,
       mcq_item_id: r.mcq_item_id,
       stem: r.mcq_items?.stem ?? "",
-      options: r.mcq_items?.options_json ?? [],
+      // tạm thời không có options_json trong schema → trả mảng rỗng
+      options: [] as any[],
     }));
 
     return NextResponse.json({ success: true, exam, items });
