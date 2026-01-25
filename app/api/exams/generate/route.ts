@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     /* --------------------------------------------------
        1. Auth: lấy user từ cookie/session của request
     -------------------------------------------------- */
-    const authClient = getRouteClient(req);
+    const authClient = getRouteClient();
     const {
       data: { user },
       error: authErr,
