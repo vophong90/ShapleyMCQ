@@ -1,9 +1,20 @@
 // app/api/exams/generate/route.ts
+// ========================================================
+// Generate Exam Version from Blueprint
+// - version_no tăng dần theo blueprint
+// - snapshot đầy đủ (Cách A): config + seed + metadata
+// - RNG theo seed để tái lập
+// - Không trùng MCQ trong cùng 1 exam
+// - Cho phép trùng giữa các version
+// ========================================================
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+
+/* ---------------- TYPES ---------------- */
 
 type LloDist = {
   llo_id: string;
@@ -32,35 +43,54 @@ type BloomStat = {
   percent: number;
 };
 
-function shuffleArray<T>(arr: T[]): T[] {
+/* ---------------- SEEDED RNG ---------------- */
+
+function mulberry32(seed: number) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleArraySeeded<T>(arr: T[], rng: () => number): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
 }
 
+/* ---------------- MAIN HANDLER ---------------- */
+
 export async function POST(req: NextRequest) {
   const supabase = getSupabaseAdmin();
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
+    /* --------------------------------------------------
+       1. Auth: dùng Supabase session, KHÔNG tin userId tự gửi
+    -------------------------------------------------- */
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser(
+      req.headers.get("Authorization")?.replace("Bearer ", "") || ""
+    );
+
+    if (authErr || !user) {
       return NextResponse.json(
-        { error: "Thiếu Authorization header" },
+        { error: "Chưa đăng nhập hoặc token không hợp lệ" },
         { status: 401 }
       );
     }
 
-    const userId = authHeader.replace("Bearer ", "").trim();
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Authorization header không hợp lệ" },
-        { status: 401 }
-      );
-    }
+    const userId = user.id;
 
+    /* --------------------------------------------------
+       2. Parse body
+    -------------------------------------------------- */
     const body = (await req.json().catch(() => ({}))) as GenerateBody;
     const blueprintId = body.blueprint_id;
 
@@ -71,7 +101,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Load blueprint
+    /* --------------------------------------------------
+       3. Load blueprint + check ownership
+    -------------------------------------------------- */
     const { data: bp, error: bpErr } = await supabase
       .from("exam_blueprints")
       .select("id, owner_id, title, config")
@@ -79,7 +111,6 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (bpErr || !bp) {
-      console.error("Error loading blueprint:", bpErr);
       return NextResponse.json(
         { error: "Không tìm thấy blueprint" },
         { status: 404 }
@@ -94,19 +125,20 @@ export async function POST(req: NextRequest) {
     }
 
     const cfg = (bp.config || {}) as BlueprintConfig;
+
     const courseId = cfg.course_id || null;
     const totalQuestions = cfg.total_questions || 0;
 
     if (!courseId) {
       return NextResponse.json(
-        { error: "Blueprint chưa cấu hình course_id trong config" },
+        { error: "Blueprint chưa cấu hình course_id" },
         { status: 400 }
       );
     }
 
     if (!totalQuestions || totalQuestions <= 0) {
       return NextResponse.json(
-        { error: "total_questions trong config không hợp lệ" },
+        { error: "total_questions không hợp lệ" },
         { status: 400 }
       );
     }
@@ -121,19 +153,49 @@ export async function POST(req: NextRequest) {
 
     const includeOwn = cfg.include_sources?.own_mcq ?? true;
     const includeShared = cfg.include_sources?.shared_mcq ?? true;
+
+    if (!includeOwn && !includeShared) {
+      return NextResponse.json(
+        { error: "Phải chọn ít nhất một nguồn MCQ (own hoặc shared)" },
+        { status: 400 }
+      );
+    }
+
     const statusFilter =
       cfg.status_filter && cfg.status_filter.length
         ? cfg.status_filter
         : ["approved"];
 
-    // 2. Chuẩn hóa phân bố LLO
+    /* --------------------------------------------------
+       4. Lấy version_no tiếp theo (transaction-safe)
+    -------------------------------------------------- */
+    const { data: lastVersionRow, error: vErr } = await supabase
+      .from("exams")
+      .select("version_no")
+      .eq("blueprint_id", blueprintId)
+      .order("version_no", { ascending: false })
+      .limit(1)
+      .single();
+
+    const nextVersionNo = (lastVersionRow?.version_no || 0) + 1;
+
+    /* --------------------------------------------------
+       5. Seed + RNG
+    -------------------------------------------------- */
+    const seed = Math.floor(Math.random() * 1e9);
+    const rng = mulberry32(seed);
+
+    /* --------------------------------------------------
+       6. Chuẩn hóa phân bố LLO
+    -------------------------------------------------- */
     const totalWeight = lloDist.reduce(
       (sum, l) => sum + (l.weight_percent || 0),
       0
     );
+
     if (!totalWeight) {
       return NextResponse.json(
-        { error: "Tổng weight_percent trong llo_distribution = 0" },
+        { error: "Tổng weight_percent của LLO = 0" },
         { status: 400 }
       );
     }
@@ -143,10 +205,11 @@ export async function POST(req: NextRequest) {
       weight_norm: (l.weight_percent || 0) / totalWeight,
     }));
 
-    const targetLloIds = normLloDist.map((l) => l.llo_id);
-    const targetLloSet = new Set(targetLloIds);
+    const targetLloSet = new Set(normLloDist.map((l) => l.llo_id));
 
-    // 3. Xây pool MCQ: llo_id -> danh sách mcq_item_id
+    /* --------------------------------------------------
+       7. Build pool MCQ theo LLO
+    -------------------------------------------------- */
     const poolMap = new Map<string, string[]>();
 
     const addToPool = (mcqId: string, lloIds: string[] | null) => {
@@ -161,47 +224,31 @@ export async function POST(req: NextRequest) {
       }
     };
 
-    // 3.1 MCQ của chính user
+    // 7.1 Own MCQ
     if (includeOwn) {
       const { data: ownMcq, error: ownErr } = await supabase
         .from("mcq_items")
-        .select("id, course_id, status, llo_ids")
+        .select("id, llo_ids")
         .eq("owner_id", userId)
         .eq("course_id", courseId)
         .in("status", statusFilter);
 
-      if (ownErr) {
-        console.error("Error loading own mcq_items:", ownErr);
-        return NextResponse.json(
-          { error: "Không tải được MCQ của bạn" },
-          { status: 500 }
-        );
-      }
-
-      (ownMcq || []).forEach((row: any) => {
-        addToPool(row.id, row.llo_ids || null);
-      });
+      if (ownErr) throw ownErr;
+      (ownMcq || []).forEach((row: any) =>
+        addToPool(row.id, row.llo_ids || null)
+      );
     }
 
-    // 3.2 MCQ được share cho user
+    // 7.2 Shared MCQ
     if (includeShared) {
       const { data: shared, error: sharedErr } = await supabase
         .from("mcq_item_shares")
-        .select(
-          "mcq_items (id, course_id, status, llo_ids)"
-        )
+        .select("mcq_items (id, llo_ids)")
         .eq("to_user_id", userId)
         .eq("mcq_items.course_id", courseId)
         .in("mcq_items.status", statusFilter);
 
-      if (sharedErr) {
-        console.error("Error loading shared mcq_items:", sharedErr);
-        return NextResponse.json(
-          { error: "Không tải được MCQ được share" },
-          { status: 500 }
-        );
-      }
-
+      if (sharedErr) throw sharedErr;
       (shared || []).forEach((row: any) => {
         const mcq = row.mcq_items;
         if (!mcq) return;
@@ -209,7 +256,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 4. Tính số câu cần cho từng LLO
+    /* --------------------------------------------------
+       8. Tính số câu cho từng LLO
+    -------------------------------------------------- */
     const countsByLlo: Record<string, number> = {};
     let assignedTotal = 0;
 
@@ -224,21 +273,26 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    // 5. Chọn câu hỏi (tránh trùng MCQ giữa các LLO)
+    /* --------------------------------------------------
+       9. Chọn MCQ (không trùng trong 1 exam)
+    -------------------------------------------------- */
     type ExamItem = { mcq_item_id: string; llo_id: string | null };
 
     const usedMcq = new Set<string>();
     const chosenItems: ExamItem[] = [];
-    const shortageWarnings: string[] = [];
+    const warnings: string[] = [];
 
     for (const l of normLloDist) {
       const lloId = l.llo_id;
-      const needed = countsByLlo[lloId] ?? 0;
+      const needed = countsByLlo[lloId] || 0;
       if (!needed) continue;
 
-      const available = shuffleArray(poolMap.get(lloId) || []);
-      let picked = 0;
+      const available = shuffleArraySeeded(
+        poolMap.get(lloId) || [],
+        rng
+      );
 
+      let picked = 0;
       for (const mcqId of available) {
         if (picked >= needed) break;
         if (usedMcq.has(mcqId)) continue;
@@ -249,7 +303,7 @@ export async function POST(req: NextRequest) {
       }
 
       if (picked < needed) {
-        shortageWarnings.push(
+        warnings.push(
           `LLO ${l.code || lloId} cần ${needed} câu nhưng chỉ lấy được ${picked}`
         );
       }
@@ -257,15 +311,28 @@ export async function POST(req: NextRequest) {
 
     if (!chosenItems.length) {
       return NextResponse.json(
-        { error: "Không chọn được câu hỏi nào từ pool MCQ" },
+        { error: "Không chọn được MCQ nào phù hợp với cấu hình" },
         { status: 400 }
       );
     }
 
-    // 6. Insert exams
-    const now = new Date();
-    const examTitle = `${bp.title} – đề ngày ${now.toLocaleDateString("vi-VN")}`;
+    /* --------------------------------------------------
+       10. Snapshot đầy đủ (Cách A)
+    -------------------------------------------------- */
+    const generatedAt = new Date().toISOString();
+    const snapshot = {
+      blueprint_config: cfg,
+      seed,
+      generator_version: "v1.0.0",
+      generated_at: generatedAt,
+      warnings,
+    };
 
+    const examTitle = `${bp.title} – Version ${nextVersionNo}`;
+
+    /* --------------------------------------------------
+       11. Insert exam
+    -------------------------------------------------- */
     const { data: examRow, error: examErr } = await supabase
       .from("exams")
       .insert({
@@ -273,80 +340,72 @@ export async function POST(req: NextRequest) {
         owner_id: userId,
         title: examTitle,
         course_id: courseId,
-        config_snapshot: cfg,
+        version_no: nextVersionNo,
+        config_snapshot: snapshot,
       })
       .select("id")
       .single();
 
     if (examErr || !examRow) {
-      console.error("Error inserting exam:", examErr);
-      return NextResponse.json(
-        { error: "Không tạo được record exams" },
-        { status: 500 }
-      );
+      throw examErr || new Error("Không tạo được exam");
     }
 
     const examId = examRow.id as string;
 
-    // 7. Insert exam_mcq_items
-    const examItemsPayload = chosenItems.map((item, index) => ({
+    /* --------------------------------------------------
+       12. Insert exam_mcq_items
+    -------------------------------------------------- */
+    const payload = chosenItems.map((item, idx) => ({
       exam_id: examId,
       mcq_item_id: item.mcq_item_id,
       llo_id: item.llo_id,
-      item_order: index + 1,
+      item_order: idx + 1,
     }));
 
     const { error: itemsErr } = await supabase
       .from("exam_mcq_items")
-      .insert(examItemsPayload);
+      .insert(payload);
 
     if (itemsErr) {
-      console.error("Error inserting exam_mcq_items:", itemsErr);
-      return NextResponse.json(
-        { error: "Không lưu được danh sách MCQ trong đề" },
-        { status: 500 }
-      );
+      throw itemsErr;
     }
 
-    // 8. Tính Bloom stats
+    /* --------------------------------------------------
+       13. Tính Bloom stats (dựa vào LLO)
+    -------------------------------------------------- */
     const uniqueLloIds = Array.from(
-      new Set(
-        chosenItems.map((i) => i.llo_id).filter(Boolean)
-      ) as Set<string>
-    );
+      new Set(chosenItems.map((i) => i.llo_id).filter(Boolean))
+    ) as string[];
 
     const { data: lloRows, error: lloErr } = await supabase
       .from("llos")
       .select("id, code, bloom_suggested")
       .in("id", uniqueLloIds);
 
-    if (lloErr) {
-      console.error("Error loading LLOs:", lloErr);
-      return NextResponse.json(
-        { error: "Không tải được thông tin LLO để tính Bloom" },
-        { status: 500 }
-      );
-    }
+    if (lloErr) throw lloErr;
 
-    const lloMap = new Map<string, { id: string; code: string | null; bloom_suggested: string | null }>();
+    const lloMap = new Map<
+      string,
+      { bloom_suggested: string | null; code: string | null }
+    >();
+
     (lloRows || []).forEach((l: any) =>
       lloMap.set(l.id, {
-        id: l.id,
-        code: l.code,
         bloom_suggested: l.bloom_suggested,
+        code: l.code,
       })
     );
 
     const bloomCounts: Record<string, number> = {};
-    const totalChosen = chosenItems.length;
-
     chosenItems.forEach((item) => {
       const llo = item.llo_id ? lloMap.get(item.llo_id) : null;
       const bloom =
         llo?.bloom_suggested?.trim() ||
         (llo?.code ? `Unknown (${llo.code})` : "Unknown");
-      bloomCounts[bloom] = (bloomCounts[bloom] ?? 0) + 1;
+      bloomCounts[bloom] = (bloomCounts[bloom] || 0) + 1;
     });
+
+    const totalChosen = chosenItems.length;
 
     const bloomStats: BloomStat[] = Object.entries(bloomCounts).map(
       ([bloom, count]) => ({
@@ -356,21 +415,24 @@ export async function POST(req: NextRequest) {
       })
     );
 
+    /* --------------------------------------------------
+       14. Response
+    -------------------------------------------------- */
     return NextResponse.json(
       {
         exam_id: examId,
+        version_no: nextVersionNo,
         title: examTitle,
         total_questions: totalChosen,
-        warnings: shortageWarnings,
+        warnings,
         bloom_stats: bloomStats,
-        items: chosenItems, // nếu muốn có chi tiết
       },
       { status: 200 }
     );
   } catch (e: any) {
-    console.error("Unexpected error in /api/exams/generate:", e);
+    console.error("Error in /api/exams/generate:", e);
     return NextResponse.json(
-      { error: e.message ?? "Lỗi không xác định" },
+      { error: e.message || "Lỗi không xác định" },
       { status: 500 }
     );
   }
