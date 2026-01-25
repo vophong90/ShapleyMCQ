@@ -15,7 +15,7 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 export async function GET(
   req: NextRequest,
   { params }: { params: { examId: string } }
-)
+) {
   const supabase = getSupabaseAdmin();
   const examId = params.examId;
 
@@ -127,7 +127,10 @@ export async function GET(
 
     const buffer = await Packer.toBuffer(doc);
 
-    const filename = `Exam_${examId.slice(0, 8)}_V${exam.version_no}_DapAn.docx`;
+    const filename = `Exam_${examId.slice(
+      0,
+      8
+    )}_V${exam.version_no}_DapAn.docx`;
 
     return new NextResponse(buffer, {
       headers: {
