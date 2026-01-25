@@ -67,14 +67,15 @@ function shuffleArraySeeded<T>(arr: T[], rng: () => number): T[] {
 /* ---------------- MAIN HANDLER ---------------- */
 
 export async function POST(req: NextRequest) {
-  // ✅ admin dùng cho DB
+  // Admin client để làm việc với DB (bỏ qua RLS nếu cần)
   const supabase = getSupabaseAdmin();
 
   try {
     /* --------------------------------------------------
-       1. Auth: lấy user từ cookie/session của request
+       1. Auth: lấy user từ cookie/session (server-side)
     -------------------------------------------------- */
-    const authClient = getRouteClient();
+    const authClient = await getRouteClient();
+
     const {
       data: { user },
       error: authErr,
@@ -168,7 +169,7 @@ export async function POST(req: NextRequest) {
         : ["approved"];
 
     /* --------------------------------------------------
-       4. Lấy version_no tiếp theo (transaction-safe)
+       4. Lấy version_no tiếp theo
     -------------------------------------------------- */
     const { data: lastVersionRow, error: vErr } = await supabase
       .from("exams")
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (vErr && vErr.code !== "PGRST116") {
-      // PGRST116 thường là "No rows" khi .single() mà không có record
+      // PGRST116: không có dòng nào
       throw vErr;
     }
 
@@ -256,7 +257,7 @@ export async function POST(req: NextRequest) {
 
       if (sharedErr) throw sharedErr;
       (shared || []).forEach((row: any) => {
-        const mcq = (row as any).mcq_items;
+        const mcq = row.mcq_items;
         if (!mcq) return;
         addToPool(mcq.id, mcq.llo_ids || null);
       });
@@ -365,7 +366,10 @@ export async function POST(req: NextRequest) {
       item_order: idx + 1,
     }));
 
-    const { error: itemsErr } = await supabase.from("exam_mcq_items").insert(payload);
+    const { error: itemsErr } = await supabase
+      .from("exam_mcq_items")
+      .insert(payload);
+
     if (itemsErr) throw itemsErr;
 
     /* --------------------------------------------------
