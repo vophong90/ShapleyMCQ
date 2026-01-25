@@ -1,7 +1,9 @@
+// app/api/exams/[examId]/export/question-paper/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 
@@ -20,11 +22,13 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 */
 
 export async function GET(
-  req: NextRequest,
-  { params }: { params: { examId: string } }
+  _req: NextRequest,
+  { params }: { params: Promise<{ examId: string }> }
 ) {
   const supabase = getSupabaseAdmin();
-  const examId = params.examId;
+
+  // Next.js 15+: params là Promise -> phải await
+  const { examId } = await params;
 
   try {
     /* ---------------------------------------
@@ -143,11 +147,7 @@ export async function GET(
       opts.forEach((opt) => {
         paragraphs.push(
           new Paragraph({
-            children: [
-              new TextRun({
-                text: `${opt.label}. ${opt.text}`,
-              }),
-            ],
+            children: [new TextRun({ text: `${opt.label}. ${opt.text}` })],
             indent: { left: 720 },
           })
         );
@@ -158,12 +158,7 @@ export async function GET(
     });
 
     const doc = new Document({
-      sections: [
-        {
-          properties: {},
-          children: paragraphs,
-        },
-      ],
+      sections: [{ properties: {}, children: paragraphs }],
     });
 
     const buffer = await Packer.toBuffer(doc);
@@ -180,7 +175,7 @@ export async function GET(
   } catch (e: any) {
     console.error("Export question paper error:", e);
     return NextResponse.json(
-      { error: e.message || "Lỗi khi xuất đề Word" },
+      { error: e?.message || "Lỗi khi xuất đề Word" },
       { status: 500 }
     );
   }
