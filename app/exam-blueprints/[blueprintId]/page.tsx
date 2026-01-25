@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
@@ -68,7 +68,7 @@ const BLOOM_COLORS = [
 /* ================= CHART ================= */
 
 function BloomDonutChart({ data }: { data: BloomStat[] }) {
-  if (!data.length) return null;
+  if (!data?.length) return null;
 
   return (
     <div className="w-full h-72">
@@ -86,7 +86,7 @@ function BloomDonutChart({ data }: { data: BloomStat[] }) {
               <Cell key={i} fill={BLOOM_COLORS[i % BLOOM_COLORS.length]} />
             ))}
           </Pie>
-          <Tooltip formatter={(v: any) => `${v.toFixed(1)}%`} />
+          <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
           <Legend />
         </PieChart>
       </ResponsiveContainer>
@@ -106,18 +106,28 @@ export default function ExamBlueprintDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [blueprint, setBlueprint] = useState<ExamBlueprint | null>(null);
-
   const [examVersions, setExamVersions] = useState<ExamVersion[]>([]);
-  const [selectedExam, setSelectedExam] = useState<ExamVersion | null>(null);
 
-  const [bloomStats, setBloomStats] = useState<BloomStat[]>([]);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  // UI: card nào đang bung thống kê
+  const [expandedExamId, setExpandedExamId] = useState<string | null>(null);
+
+  // cache stats theo examId để khỏi fetch lại
+  const [bloomByExam, setBloomByExam] = useState<Record<string, BloomStat[]>>(
+    {}
+  );
+  const [warningsByExam, setWarningsByExam] = useState<Record<string, string[]>>(
+    {}
+  );
+  const [statsLoadingExamId, setStatsLoadingExamId] = useState<string | null>(
+    null
+  );
 
   /* ================= LOAD BLUEPRINT ================= */
 
   useEffect(() => {
     async function loadBlueprint() {
       setLoading(true);
+      setError(null);
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) throw new Error("Chưa đăng nhập");
@@ -131,7 +141,7 @@ export default function ExamBlueprintDetailPage() {
         if (error || !bp) throw error;
         setBlueprint(bp as ExamBlueprint);
       } catch (e: any) {
-        setError(e.message || "Không tải được blueprint");
+        setError(e?.message || "Không tải được blueprint");
       } finally {
         setLoading(false);
       }
@@ -140,46 +150,60 @@ export default function ExamBlueprintDetailPage() {
     if (blueprintId) loadBlueprint();
   }, [blueprintId, supabase]);
 
-  /* ================= LOAD BLOOM STATS ================= */
-
-  const loadBloomStats = useCallback(async (examId: string) => {
-    const res = await fetch(`/api/exams/${examId}/bloom-stats`);
-    const json = await res.json();
-    if (json.success) {
-      setBloomStats(json.bloom_stats || []);
-      setWarnings(json.warnings || []);
-    }
-  }, []);
-
   /* ================= LOAD EXAM VERSIONS ================= */
 
-  const loadExamVersions = useCallback(
-    async (autoSelectNewest = false) => {
-      const { data, error } = await supabase
-        .from("exams")
-        .select("id, version_no, created_at, title")
-        .eq("blueprint_id", blueprintId)
-        .order("version_no", { ascending: false });
+  const loadExamVersions = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("exams")
+      .select("id, version_no, created_at, title")
+      .eq("blueprint_id", blueprintId)
+      .order("version_no", { ascending: false });
 
-      if (!error) {
-        setExamVersions(data || []);
-        if (autoSelectNewest && data?.length) {
-          setSelectedExam(data[0]);
-          loadBloomStats(data[0].id);
-        }
-      }
-    },
-    [blueprintId, supabase, loadBloomStats]
-  );
+    if (error) return;
+    setExamVersions((data || []) as ExamVersion[]);
+  }, [blueprintId, supabase]);
 
   useEffect(() => {
     if (blueprintId) loadExamVersions();
   }, [blueprintId, loadExamVersions]);
 
+  /* ================= BLOOM STATS (per exam) ================= */
+
+  const loadBloomStats = useCallback(
+    async (examId: string) => {
+      // đã có cache rồi -> khỏi tải
+      if (bloomByExam[examId]) return;
+
+      setStatsLoadingExamId(examId);
+      try {
+        const res = await fetch(`/api/exams/${examId}/bloom-stats`);
+        const json = await res.json();
+
+        if (json?.success) {
+          setBloomByExam((prev) => ({
+            ...prev,
+            [examId]: (json.bloom_stats || []) as BloomStat[],
+          }));
+          setWarningsByExam((prev) => ({
+            ...prev,
+            [examId]: (json.warnings || []) as string[],
+          }));
+        } else {
+          setBloomByExam((prev) => ({ ...prev, [examId]: [] }));
+          setWarningsByExam((prev) => ({ ...prev, [examId]: [] }));
+        }
+      } finally {
+        setStatsLoadingExamId((cur) => (cur === examId ? null : cur));
+      }
+    },
+    [bloomByExam]
+  );
+
   /* ================= GENERATE EXAM ================= */
 
   async function handleGenerateExam() {
     if (!blueprint) return;
+
     setGenerating(true);
     setError(null);
 
@@ -191,11 +215,12 @@ export default function ExamBlueprintDetailPage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Generate thất bại");
+      if (!res.ok) throw new Error(data?.error || "Generate thất bại");
 
-      await loadExamVersions(true); // auto select version mới nhất
+      await loadExamVersions();
+      // optional: auto bung thống kê version mới nhất (data.exam_id nếu API trả về)
     } catch (e: any) {
-      setError(e.message || "Lỗi khi tạo đề");
+      setError(e?.message || "Lỗi khi tạo đề");
     } finally {
       setGenerating(false);
     }
@@ -208,14 +233,27 @@ export default function ExamBlueprintDetailPage() {
 
     const res = await fetch(`/api/exams/${examId}`, { method: "DELETE" });
     const json = await res.json();
-    if (!json.success) {
-      alert(json.error || "Xoá thất bại");
+
+    if (!json?.success) {
+      alert(json?.error || "Xoá thất bại");
       return;
     }
 
-    setSelectedExam(null);
-    setBloomStats([]);
-    setWarnings([]);
+    // nếu đang bung thống kê đúng card này thì đóng lại
+    setExpandedExamId((cur) => (cur === examId ? null : cur));
+
+    // xoá cache stats cho gọn (optional)
+    setBloomByExam((prev) => {
+      const next = { ...prev };
+      delete next[examId];
+      return next;
+    });
+    setWarningsByExam((prev) => {
+      const next = { ...prev };
+      delete next[examId];
+      return next;
+    });
+
     await loadExamVersions();
   }
 
@@ -231,13 +269,12 @@ export default function ExamBlueprintDetailPage() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
-      <div className="flex justify-between items-center">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">
-            Khảo thí – {blueprint.title}
-          </h1>
+          <h1 className="text-2xl font-semibold">Khảo thí – {blueprint.title}</h1>
           {blueprint.description && (
-            <p className="text-sm text-slate-600">{blueprint.description}</p>
+            <p className="text-sm text-slate-600 mt-1">{blueprint.description}</p>
           )}
         </div>
 
@@ -252,85 +289,128 @@ export default function ExamBlueprintDetailPage() {
           <button
             onClick={handleGenerateExam}
             disabled={!canGenerate || generating}
-            className="px-4 py-2 rounded bg-emerald-600 text-white text-sm"
+            className="px-4 py-2 rounded bg-emerald-600 text-white text-sm disabled:opacity-60"
           >
             {generating ? "Đang tạo…" : "Tạo version mới"}
           </button>
         </div>
       </div>
 
-      {/* VERSION LIST + DETAIL */}
-      <div className="grid md:grid-cols-3 gap-6">
-        <div className="border rounded-lg p-4">
-          <h2 className="font-semibold mb-2">Danh sách Version</h2>
-          <div className="space-y-2">
-            {examVersions.map((v) => (
-              <div
-                key={v.id}
-                onClick={() => {
-                  setSelectedExam(v);
-                  loadBloomStats(v.id);
-                }}
-                className={`p-2 rounded border cursor-pointer ${
-                  selectedExam?.id === v.id
-                    ? "border-emerald-500 bg-emerald-50"
-                    : ""
-                }`}
-              >
-                <div className="font-medium">Version {v.version_no}</div>
-                <div className="text-xs text-slate-500">
-                  {new Date(v.created_at).toLocaleString("vi-VN")}
-                </div>
-
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteVersion(v.id);
-                  }}
-                  className="text-xs text-red-600 mt-1"
-                >
-                  Xoá version
-                </button>
-              </div>
-            ))}
+      {/* Versions */}
+      <div className="border rounded-lg">
+        <div className="p-4 border-b">
+          <div className="font-semibold">Danh sách Version</div>
+          <div className="text-xs text-slate-500 mt-1">
+            Mỗi version là một đề. Bạn có thể xuất Word hoặc vào “Phân tích đề”.
           </div>
         </div>
 
-        <div className="md:col-span-2 border rounded-lg p-4">
-          {!selectedExam ? (
-            <p className="text-slate-500">Chọn một version để xem chi tiết.</p>
+        <div className="divide-y">
+          {examVersions.length === 0 ? (
+            <div className="p-4 text-slate-500">Chưa có version nào.</div>
           ) : (
-            <>
-              <div className="flex justify-between mb-3">
-                <h2 className="font-semibold">
-                  Version {selectedExam.version_no}
-                </h2>
-                <div className="flex gap-2">
-                  <a
-                    href={`/api/exams/${selectedExam.id}/export/question-paper`}
-                    className="px-3 py-1 border rounded text-sm"
-                  >
-                    Xuất đề Word
-                  </a>
-                  <a
-                    href={`/api/exams/${selectedExam.id}/export/answer-key`}
-                    className="px-3 py-1 border rounded text-sm"
-                  >
-                    Xuất đáp án Word
-                  </a>
-                </div>
-              </div>
+            examVersions.map((v) => {
+              const expanded = expandedExamId === v.id;
+              const bloomStats = bloomByExam[v.id] || [];
+              const warnings = warningsByExam[v.id] || [];
+              const statsLoading = statsLoadingExamId === v.id;
 
-              {warnings.length > 0 && (
-                <div className="text-xs text-amber-600 mb-3">
-                  {warnings.map((w, i) => (
-                    <div key={i}>• {w}</div>
-                  ))}
-                </div>
-              )}
+              return (
+                <div key={v.id} className="p-4">
+                  {/* Row */}
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium">
+                        Version {v.version_no}
+                        {v.title ? (
+                          <span className="text-slate-500 font-normal">
+                            {" "}
+                            – {v.title}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">
+                        {new Date(v.created_at).toLocaleString("vi-VN")}
+                      </div>
+                    </div>
 
-              <BloomDonutChart data={bloomStats} />
-            </>
+                    {/* Actions */}
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <Link
+                        href={`/exams/${v.id}`}
+                        className="px-3 py-1 rounded text-sm bg-slate-900 text-white"
+                      >
+                        Phân tích đề
+                      </Link>
+
+                      <a
+                        href={`/api/exams/${v.id}/export/question-paper`}
+                        className="px-3 py-1 border rounded text-sm"
+                      >
+                        Xuất đề
+                      </a>
+
+                      <a
+                        href={`/api/exams/${v.id}/export/answer-key`}
+                        className="px-3 py-1 border rounded text-sm"
+                      >
+                        Xuất đáp án
+                      </a>
+
+                      <button
+                        onClick={() => handleDeleteVersion(v.id)}
+                        className="px-3 py-1 border rounded text-sm text-red-600"
+                      >
+                        Xoá
+                      </button>
+
+                      <button
+                        onClick={async () => {
+                          if (expanded) {
+                            setExpandedExamId(null);
+                          } else {
+                            setExpandedExamId(v.id);
+                            await loadBloomStats(v.id);
+                          }
+                        }}
+                        className="px-3 py-1 border rounded text-sm"
+                      >
+                        {expanded ? "Ẩn thống kê" : "Xem thống kê"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded stats */}
+                  {expanded && (
+                    <div className="mt-4 rounded-lg border bg-slate-50 p-4">
+                      {statsLoading ? (
+                        <div className="text-sm text-slate-500">
+                          Đang tải thống kê Bloom…
+                        </div>
+                      ) : (
+                        <>
+                          {warnings.length > 0 && (
+                            <div className="text-xs text-amber-700 mb-3 space-y-1">
+                              {warnings.map((w, i) => (
+                                <div key={i}>• {w}</div>
+                              ))}
+                            </div>
+                          )}
+
+                          {bloomStats.length > 0 ? (
+                            <BloomDonutChart data={bloomStats} />
+                          ) : (
+                            <div className="text-sm text-slate-500">
+                              Chưa có dữ liệu Bloom cho version này.
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </div>
