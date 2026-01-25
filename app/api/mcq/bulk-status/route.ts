@@ -16,7 +16,8 @@ function isValidStatus(s: any): s is "draft" | "approved" {
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = getRouteClient();
+    // ✅ FIX: await getRouteClient()
+    const supabase = await getRouteClient();
 
     // Auth
     const { data: auth, error: authErr } = await supabase.auth.getUser();
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Bulk update (owner-only)
+    // Owner-only update (đúng như bạn chốt)
     const { data: updatedRows, error: upErr } = await supabase
       .from("mcq_items")
       .update({ status, updated_at: new Date().toISOString() })
