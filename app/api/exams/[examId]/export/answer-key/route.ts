@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 
@@ -13,11 +13,11 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 */
 
 export async function GET(
-  req: NextRequest,
-  context: { params: Record<string, string> }
-  ) {
-  const examId = context.params.examId;
+  req: Request,
+  { params }: { params: { examId: string } }
+) {
   const supabase = getSupabaseAdmin();
+  const examId = params.examId;
 
   try {
     /* ---------------------------------------
