@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // 4) Load items + join mcq_items để lấy stem
+    // 4) Load items + join mcq_items & mcq_options để lấy stem + đáp án
     const { data: rows, error: itemsErr } = await supabase
       .from("exam_mcq_items")
       .select(
@@ -57,7 +57,13 @@ export async function GET(req: NextRequest) {
         mcq_item_id,
         mcq_items (
           id,
-          stem
+          stem,
+          mcq_options (
+            id,
+            label,
+            text,
+            is_correct
+          )
         )
       `
       )
@@ -66,14 +72,17 @@ export async function GET(req: NextRequest) {
 
     if (itemsErr) throw itemsErr;
 
-    const items = (rows || []).map((r: any) => ({
-      item_order: r.item_order,
-      llo_id: r.llo_id,
-      mcq_item_id: r.mcq_item_id,
-      stem: r.mcq_items?.stem ?? "",
-      // tạm thời không có options_json trong schema → trả mảng rỗng
-      options: [] as any[],
-    }));
+    const items =
+      (rows || []).map((r: any) => ({
+        item_order: r.item_order,
+        llo_id: r.llo_id,
+        mcq_item_id: r.mcq_item_id,
+        stem: r.mcq_items?.stem ?? "",
+        // lấy trực tiếp mảng đáp án từ mcq_options
+        options: Array.isArray(r.mcq_items?.mcq_options)
+          ? r.mcq_items.mcq_options
+          : [],
+      })) ?? [];
 
     return NextResponse.json({ success: true, exam, items });
   } catch (e: any) {
