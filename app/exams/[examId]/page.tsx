@@ -16,7 +16,7 @@ type ExamItem = {
   mcq_item_id: string;
   llo_id?: string | null;
   stem: string;
-  options: any[];
+  options: any[] | null;
 };
 
 type SimResult = {
@@ -203,7 +203,43 @@ export default function ExamPreviewPage() {
         }
 
         setExam(json.exam as Exam);
-        setItems((json.items || []) as ExamItem[]);
+
+        // 🔧 Chuẩn hoá items và options (để chắc chắn luôn có đáp án)
+        const rawItems = (json.items || []) as any[];
+
+        const normalized: ExamItem[] = rawItems.map((it: any) => {
+          let options: any[] = [];
+
+          if (Array.isArray(it.options)) {
+            options = it.options;
+          } else if (Array.isArray(it.options_json)) {
+            options = it.options_json;
+          } else if (typeof it.options_json === "string") {
+            try {
+              const parsed = JSON.parse(it.options_json);
+              if (Array.isArray(parsed)) options = parsed;
+            } catch {
+              // ignore parse error
+            }
+          } else if (typeof it.options === "string") {
+            try {
+              const parsed = JSON.parse(it.options);
+              if (Array.isArray(parsed)) options = parsed;
+            } catch {
+              // ignore
+            }
+          }
+
+          return {
+            item_order: it.item_order,
+            mcq_item_id: it.mcq_item_id,
+            llo_id: it.llo_id ?? null,
+            stem: it.stem,
+            options,
+          };
+        });
+
+        setItems(normalized);
 
         // ✅ check IRT params status + load history
         await fetchIrtStatus();
@@ -598,7 +634,10 @@ export default function ExamPreviewPage() {
 
       {/* Exam items */}
       <div className="space-y-4">
-        <h2 className="text-lg font-semibold">Nội dung đề</h2>
+        {/* Heading nhỏ, không quá nổi bật */}
+        <h2 className="text-base font-semibold text-slate-800">
+          Nội dung đề
+        </h2>
 
         {items.length === 0 ? (
           <p className="text-sm text-slate-600">Đề chưa có câu hỏi.</p>
@@ -612,10 +651,12 @@ export default function ExamPreviewPage() {
                 Câu {it.item_order}
               </div>
 
-              <div className="text-base font-medium whitespace-pre-wrap">
+              {/* Stem: cỡ vừa, không đậm quá */}
+              <div className="text-[15px] leading-relaxed text-slate-800 whitespace-pre-wrap">
                 {it.stem}
               </div>
 
+              {/* Đáp án */}
               <div className="mt-3 space-y-2">
                 {(Array.isArray(it.options) ? it.options : []).map(
                   (op: any, idx: number) => {
