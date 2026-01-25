@@ -1,5 +1,5 @@
 // app/api/exams/[examId]/bloom-stats/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getRouteClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ function normalizeBloom(v: any) {
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: Request,
   { params }: { params: { examId: string } }
 ) {
   try {
@@ -29,9 +29,9 @@ export async function GET(
       );
     }
 
-    const supabase = getRouteClient(req);
+    const supabase = await getRouteClient();
 
-    // Must be logged in (because this uses user's RLS context)
+    // check login (dựa cookie)
     const { data: authData, error: authErr } = await supabase.auth.getUser();
     if (authErr) {
       return NextResponse.json(
@@ -49,7 +49,7 @@ export async function GET(
     /**
      * Join:
      * exam_mcq_items.mcq_item_id -> mcq_items.id
-     * Need bloom_level (primary), fallback target_bloom if bloom_level null/empty
+     * Lấy bloom_level (ưu tiên), fallback target_bloom
      */
     const { data, error } = await supabase
       .from("exam_mcq_items")
@@ -111,19 +111,15 @@ export async function GET(
       .sort((a, b) => b.count - a.count);
 
     const warnings: string[] = [];
-    if (total === 0) {
-      warnings.push("Đề này chưa có câu hỏi để thống kê Bloom.");
-    }
-    if (missingBloom > 0) {
+    if (total === 0) warnings.push("Đề này chưa có câu hỏi để thống kê Bloom.");
+    if (missingBloom > 0)
       warnings.push(
         `${missingBloom}/${total} câu chưa có bloom_level/target_bloom → tính vào 'Unknown'.`
       );
-    }
-    if (usedTargetBloomFallback > 0) {
+    if (usedTargetBloomFallback > 0)
       warnings.push(
         `${usedTargetBloomFallback}/${total} câu không có bloom_level, đã fallback sang target_bloom.`
       );
-    }
 
     return NextResponse.json({
       success: true,
