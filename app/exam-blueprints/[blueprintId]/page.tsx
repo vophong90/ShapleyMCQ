@@ -1,8 +1,7 @@
-// app/exam-blueprints/[blueprintId]/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabaseBrowser";
 import {
@@ -13,6 +12,8 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+
+/* ================= TYPES ================= */
 
 type LloDistributionConfig = {
   llo_id: string;
@@ -39,16 +40,19 @@ type ExamBlueprint = {
   config: BlueprintConfig;
 };
 
+type ExamVersion = {
+  id: string;
+  version_no: number;
+  created_at: string;
+};
+
 type BloomStat = {
   bloom: string;
   count: number;
   percent: number;
 };
 
-type ExamItem = {
-  mcq_item_id: string;
-  llo_id: string | null;
-};
+/* ================= CONSTANTS ================= */
 
 const BLOOM_COLORS = [
   "#0ea5e9",
@@ -60,11 +64,13 @@ const BLOOM_COLORS = [
   "#64748b",
 ];
 
+/* ================= CHART ================= */
+
 function BloomDonutChart({ data }: { data: BloomStat[] }) {
   if (!data.length) return null;
 
   return (
-    <div className="w-full h-80">
+    <div className="w-full h-72">
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -75,16 +81,14 @@ function BloomDonutChart({ data }: { data: BloomStat[] }) {
             outerRadius="90%"
             paddingAngle={3}
           >
-            {data.map((entry, index) => (
+            {data.map((_, i) => (
               <Cell
-                key={`cell-${entry.bloom}-${index}`}
-                fill={BLOOM_COLORS[index % BLOOM_COLORS.length]}
+                key={i}
+                fill={BLOOM_COLORS[i % BLOOM_COLORS.length]}
               />
             ))}
           </Pie>
-          <Tooltip
-            formatter={(value: any) => `${value?.toFixed?.(1) ?? value}%`}
-          />
+          <Tooltip formatter={(v: any) => `${v.toFixed(1)}%`} />
           <Legend />
         </PieChart>
       </ResponsiveContainer>
@@ -92,331 +96,236 @@ function BloomDonutChart({ data }: { data: BloomStat[] }) {
   );
 }
 
+/* ================= MAIN PAGE ================= */
+
 export default function ExamBlueprintDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const blueprintId = params?.blueprintId as string;
+
+  const supabase = useMemo(() => getSupabaseBrowser(), []);
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [blueprint, setBlueprint] = useState<ExamBlueprint | null>(null);
 
-  const [examId, setExamId] = useState<string | null>(null);
-  const [examItems, setExamItems] = useState<ExamItem[]>([]);
+  // Danh sách versions
+  const [examVersions, setExamVersions] = useState<ExamVersion[]>([]);
+  const [selectedExam, setSelectedExam] = useState<ExamVersion | null>(null);
+
+  // Stats theo version đang chọn
   const [bloomStats, setBloomStats] = useState<BloomStat[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
 
-  // ✅ Dùng supabase-browser.ts
-  const supabase = useMemo(() => getSupabaseBrowser(), []);
+  /* ================= LOAD BLUEPRINT ================= */
 
-  // 1. Load blueprint
   useEffect(() => {
-    async function loadData() {
+    async function loadBlueprint() {
       setLoading(true);
-      setError(null);
       try {
         const {
           data: { user },
-          error: userErr,
         } = await supabase.auth.getUser();
-        if (userErr) throw userErr;
-        if (!user) {
-          setError("Bạn cần đăng nhập để sử dụng Khảo thí.");
-          setLoading(false);
-          return;
-        }
+        if (!user) throw new Error("Chưa đăng nhập");
 
-        const { data, error: bpErr } = await supabase
+        const { data, error } = await supabase
           .from("exam_blueprints")
           .select("id, title, description, owner_id, config")
           .eq("id", blueprintId)
           .single();
 
-        if (bpErr || !data) {
-          throw bpErr || new Error("Không tìm thấy blueprint.");
-        }
+        if (error || !data) throw error;
 
-        const config = (data.config || {
-          course_id: null,
-          total_questions: 0,
-          llo_distribution: [],
-        }) as BlueprintConfig;
-
-        const bp: ExamBlueprint = {
-          id: data.id,
-          title: data.title,
-          description: data.description,
-          owner_id: data.owner_id,
-          config,
-        };
-        setBlueprint(bp);
+        setBlueprint(data as ExamBlueprint);
       } catch (e: any) {
-        console.error(e);
-        setError(e.message ?? "Không tải được blueprint.");
+        setError(e.message || "Không tải được blueprint");
       } finally {
         setLoading(false);
       }
     }
 
-    if (blueprintId) loadData();
+    if (blueprintId) loadBlueprint();
   }, [blueprintId, supabase]);
+
+  /* ================= LOAD EXAM VERSIONS ================= */
+
+  async function loadExamVersions(autoSelectNewest = false) {
+    const { data, error } = await supabase
+      .from("exams")
+      .select("id, version_no, created_at")
+      .eq("blueprint_id", blueprintId)
+      .order("version_no", { ascending: false });
+
+    if (!error) {
+      setExamVersions(data || []);
+      if (autoSelectNewest && data?.length) {
+        setSelectedExam(data[0]);
+        loadBloomStats(data[0].id);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (blueprintId) loadExamVersions();
+  }, [blueprintId]);
+
+  /* ================= LOAD BLOOM STATS ================= */
+
+  async function loadBloomStats(examId: string) {
+    const res = await fetch(`/api/exams/${examId}/bloom-stats`);
+    const json = await res.json();
+    if (json.success) {
+      setBloomStats(json.bloom_stats || []);
+      setWarnings(json.warnings || []);
+    }
+  }
+
+  /* ================= GENERATE EXAM ================= */
 
   async function handleGenerateExam() {
     if (!blueprint) return;
+
     setGenerating(true);
     setError(null);
-    setWarnings([]);
 
     try {
-      const {
-        data: { user },
-        error: userErr,
-      } = await supabase.auth.getUser();
-      if (userErr) throw userErr;
-      if (!user) throw new Error("Chưa đăng nhập.");
-
       const res = await fetch("/api/exams/generate", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${user.id}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ blueprint_id: blueprint.id }),
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Lỗi khi tạo đề thi (API).");
-      }
+      if (!res.ok) throw new Error(data.error || "Generate thất bại");
 
-      setExamId(data.exam_id || null);
-      setExamItems((data.items || []) as ExamItem[]);
-      setBloomStats((data.bloom_stats || []) as BloomStat[]);
-      setWarnings((data.warnings || []) as string[]);
+      // Reload list và auto select version mới nhất
+      await loadExamVersions(true);
     } catch (e: any) {
-      console.error(e);
-      setError(e.message ?? "Lỗi khi tạo đề thi.");
+      setError(e.message || "Lỗi khi tạo đề");
     } finally {
       setGenerating(false);
     }
   }
 
-  if (loading) {
-    return (
-      <div className="max-w-4xl mx-auto py-10">
-        <p>Đang tải blueprint...</p>
-      </div>
-    );
-  }
+  /* ================= RENDER ================= */
 
-  if (error && !blueprint) {
-    return (
-      <div className="max-w-4xl mx-auto py-10">
-        <p className="text-red-600">{error}</p>
-      </div>
-    );
-  }
-
-  if (!blueprint) {
-    return (
-      <div className="max-w-4xl mx-auto py-10">
-        <p>Không tìm thấy blueprint.</p>
-      </div>
-    );
-  }
+  if (loading) return <p className="p-8">Đang tải…</p>;
+  if (error) return <p className="p-8 text-red-600">{error}</p>;
+  if (!blueprint) return <p className="p-8">Không tìm thấy blueprint</p>;
 
   const cfg = blueprint.config;
-  const hasLlo = (cfg.llo_distribution || []).length > 0;
-  const hasTotalQuestions = (cfg.total_questions || 0) > 0;
-  const canGenerate = hasLlo && hasTotalQuestions;
-
-  const configNotice: string | null = !hasTotalQuestions
-    ? "Blueprint chưa cấu hình tổng số câu. Hãy vào 'Cấu hình Blueprint' để thiết lập."
-    : !hasLlo
-    ? "Blueprint chưa gán LLO và % phân bổ. Hãy vào 'Cấu hình Blueprint' để thiết lập."
-    : null;
+  const canGenerate =
+    cfg.total_questions > 0 && cfg.llo_distribution.length > 0;
 
   return (
-    <div className="max-w-5xl mx-auto py-8 space-y-8 px-4">
-      <div className="flex items-center justify-between gap-4">
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
+      {/* HEADER */}
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold">
             Khảo thí – {blueprint.title}
           </h1>
           {blueprint.description && (
-            <p className="text-sm text-slate-600 mt-1">
+            <p className="text-sm text-slate-600">
               {blueprint.description}
             </p>
           )}
         </div>
 
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex gap-2">
-            {/* Nút mở trang cấu hình */}
-            <Link
-              href={`/exam-blueprints/${blueprint.id}/config`}
-              className="px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              Cấu hình Blueprint
-            </Link>
+        <div className="flex gap-2">
+          <Link
+            href={`/exam-blueprints/${blueprint.id}/config`}
+            className="px-3 py-2 rounded border text-sm"
+          >
+            Cấu hình Blueprint
+          </Link>
 
-            {/* ✅ Nút xem đề (chỉ hiện khi đã có examId) */}
-            {examId && (
-              <button
-                onClick={() => router.push(`/exams/${examId}`)}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-700 hover:bg-slate-50"
+          <button
+            onClick={handleGenerateExam}
+            disabled={!canGenerate || generating}
+            className="px-4 py-2 rounded bg-emerald-600 text-white text-sm"
+          >
+            {generating ? "Đang tạo…" : "Tạo version mới"}
+          </button>
+        </div>
+      </div>
+
+      {/* VERSION LIST */}
+      <div className="grid md:grid-cols-3 gap-6">
+        <div className="border rounded-lg p-4">
+          <h2 className="font-semibold mb-2">Danh sách Version</h2>
+          <div className="space-y-2">
+            {examVersions.map((v) => (
+              <div
+                key={v.id}
+                onClick={() => {
+                  setSelectedExam(v);
+                  loadBloomStats(v.id);
+                }}
+                className={`p-2 rounded border cursor-pointer ${
+                  selectedExam?.id === v.id
+                    ? "border-brand-600 bg-brand-50"
+                    : ""
+                }`}
               >
-                Xem đề
-              </button>
+                <div className="font-medium">
+                  Version {v.version_no}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {new Date(v.created_at).toLocaleString("vi-VN")}
+                </div>
+              </div>
+            ))}
+            {!examVersions.length && (
+              <p className="text-xs text-slate-500">
+                Chưa có version nào.
+              </p>
             )}
-
-            {/* Nút tạo đề */}
-            <button
-              onClick={handleGenerateExam}
-              disabled={!canGenerate || generating}
-              className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-60"
-            >
-              {generating ? "Đang tạo đề..." : "Tạo đề từ Blueprint"}
-            </button>
           </div>
+        </div>
 
-          {/* Thông báo nếu chưa config đủ để generate */}
-          {configNotice && (
-            <p className="text-[11px] text-amber-600 text-right">
-              {configNotice}
+        {/* VERSION DETAIL */}
+        <div className="md:col-span-2 border rounded-lg p-4">
+          {!selectedExam ? (
+            <p className="text-slate-500">
+              Chọn một version để xem chi tiết.
             </p>
+          ) : (
+            <>
+              <div className="flex justify-between mb-3">
+                <h2 className="font-semibold">
+                  Version {selectedExam.version_no}
+                </h2>
+                <div className="flex gap-2">
+                  <a
+                    href={`/api/exams/${selectedExam.id}/export/question-paper`}
+                    className="px-3 py-1 border rounded text-sm"
+                  >
+                    Xuất đề Word
+                  </a>
+                  <a
+                    href={`/api/exams/${selectedExam.id}/export/answer-key`}
+                    className="px-3 py-1 border rounded text-sm"
+                  >
+                    Xuất đáp án Word
+                  </a>
+                </div>
+              </div>
+
+              {warnings.length > 0 && (
+                <div className="text-xs text-amber-600 mb-3">
+                  {warnings.map((w, i) => (
+                    <div key={i}>• {w}</div>
+                  ))}
+                </div>
+              )}
+
+              <BloomDonutChart data={bloomStats} />
+            </>
           )}
         </div>
       </div>
-
-      {/* Tóm tắt config */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold mb-3">Tóm tắt Blueprint</h2>
-        <div className="grid md:grid-cols-3 gap-4 text-sm">
-          <div>
-            <div className="text-slate-500">Học phần (course_id)</div>
-            <div className="font-medium">
-              {cfg.course_id ?? "Chưa cấu hình"}
-            </div>
-          </div>
-          <div>
-            <div className="text-slate-500">Tổng số câu</div>
-            <div className="font-medium">{cfg.total_questions}</div>
-          </div>
-          <div>
-            <div className="text-slate-500">Nguồn MCQ sử dụng</div>
-            <div className="font-medium">
-              {cfg.include_sources?.own_mcq !== false ? "Câu của tôi" : null}
-              {cfg.include_sources?.shared_mcq !== false
-                ? (cfg.include_sources?.own_mcq !== false ? " + " : "") +
-                  "Câu được share"
-                : cfg.include_sources?.own_mcq === false
-                ? "Không có"
-                : ""}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full text-sm border-t border-slate-200">
-            <thead>
-              <tr className="text-left text-slate-500">
-                <th className="py-2 pr-4">LLO</th>
-                <th className="py-2 pr-4">% đóng góp</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(cfg.llo_distribution || []).length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={2}
-                    className="py-3 text-xs text-slate-500 italic"
-                  >
-                    Chưa có LLO nào được chọn trong blueprint.
-                  </td>
-                </tr>
-              ) : (
-                cfg.llo_distribution.map((l) => (
-                  <tr key={l.llo_id} className="border-t border-slate-100">
-                    <td className="py-2 pr-4">
-                      <span className="font-medium">
-                        {l.code || l.llo_id.slice(0, 8)}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4">
-                      {l.weight_percent.toFixed(1)}%
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {warnings.length > 0 && (
-          <div className="mt-3 text-xs text-amber-600 space-y-1">
-            {warnings.map((w, i) => (
-              <div key={i}>• {w}</div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Kết quả đề & Bloom stats */}
-      {examId && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">
-              Đề thi đã tạo (Exam ID: {examId.slice(0, 8)}…)
-            </h2>
-            <div className="text-sm text-slate-600">
-              Tổng số câu:{" "}
-              <span className="font-semibold">{examItems.length}</span>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Bảng Bloom */}
-            <div>
-              <h3 className="text-sm font-semibold mb-2">
-                Phân bố mức Bloom (theo LLO)
-              </h3>
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="text-left text-slate-500 border-b border-slate-200">
-                    <th className="py-2 pr-4">Mức Bloom</th>
-                    <th className="py-2 pr-4">Số câu</th>
-                    <th className="py-2 pr-4">% trong đề</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bloomStats.map((row) => (
-                    <tr
-                      key={row.bloom}
-                      className="border-b border-slate-100 last:border-0"
-                    >
-                      <td className="py-2 pr-4">{row.bloom}</td>
-                      <td className="py-2 pr-4">{row.count}</td>
-                      <td className="py-2 pr-4">
-                        {row.percent.toFixed(1)}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Donut chart */}
-            <div>
-              <h3 className="text-sm font-semibold mb-2">
-                Biểu đồ donut Bloom
-              </h3>
-              <BloomDonutChart data={bloomStats} />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
