@@ -1,6 +1,8 @@
+// app/api/exams/[examId]/export/answer-key/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { Document, Packer, Paragraph, TextRun } from "docx";
@@ -13,11 +15,13 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 */
 
 export async function GET(
-  req: Request,
-  { params }: { params: { examId: string } }
+  _req: NextRequest,
+  ctx: RouteContext<"/api/exams/[examId]/export/answer-key">
 ) {
   const supabase = getSupabaseAdmin();
-  const examId = params.examId;
+
+  // Next.js 15+: params là Promise -> phải await
+  const { examId } = await ctx.params;
 
   try {
     /* ---------------------------------------
@@ -82,7 +86,6 @@ export async function GET(
     --------------------------------------- */
     const paragraphs: Paragraph[] = [];
 
-    // Tiêu đề
     paragraphs.push(
       new Paragraph({
         children: [
@@ -98,39 +101,26 @@ export async function GET(
       })
     );
 
-    // Danh sách đáp án
     examItems.forEach((item: any, index: number) => {
       const labels = answerMap.get(item.mcq_item_id) || [];
-      const answerText = labels.length
-        ? labels.join(", ")
-        : "[Chưa có đáp án]";
+      const answerText = labels.length ? labels.join(", ") : "[Chưa có đáp án]";
 
       paragraphs.push(
         new Paragraph({
-          children: [
-            new TextRun({
-              text: `Câu ${index + 1}: ${answerText}`,
-            }),
-          ],
+          children: [new TextRun({ text: `Câu ${index + 1}: ${answerText}` })],
         })
       );
     });
 
     const doc = new Document({
-      sections: [
-        {
-          properties: {},
-          children: paragraphs,
-        },
-      ],
+      sections: [{ properties: {}, children: paragraphs }],
     });
 
     const buffer = await Packer.toBuffer(doc);
 
-    const filename = `Exam_${examId.slice(
-      0,
-      8
-    )}_V${exam.version_no}_DapAn.docx`;
+    const filename = `Exam_${examId.slice(0, 8)}_V${
+      exam.version_no
+    }_DapAn.docx`;
 
     return new NextResponse(buffer, {
       headers: {
@@ -142,7 +132,7 @@ export async function GET(
   } catch (e: any) {
     console.error("Export answer key error:", e);
     return NextResponse.json(
-      { error: e.message || "Lỗi khi xuất đáp án Word" },
+      { error: e?.message || "Lỗi khi xuất đáp án Word" },
       { status: 500 }
     );
   }
