@@ -29,7 +29,6 @@ type WizardContext = {
   lesson_title?: string;
   learner_level?: string;
   bloom_level?: string;
-  // Giữ để tương thích backward – nhưng ưu tiên LLO từ DB
   llos_text?: string;
 };
 
@@ -106,28 +105,21 @@ export default function AUPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // userId + courses/lessons + AU đã lưu
   const [userId, setUserId] = useState<string | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [savedAus, setSavedAus] = useState<SavedAU[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
 
-  // LLO từ Supabase cho course/lesson hiện tại
   const [llos, setLlos] = useState<LLO[]>([]);
   const [loadingLLOs, setLoadingLLOs] = useState(false);
   const [selectedLloId, setSelectedLloId] = useState<string | null>(null);
 
-  // NEW: số lượng AU cần sinh
   const [auCount, setAuCount] = useState<number>(8);
-
-  // NEW: loading khi xóa AU đã lưu
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // NEW: nguồn sinh AU
   const [sourceMode, setSourceMode] = useState<AuSourceMode>("upload");
 
-  // NEW: book trong DB
   const [books, setBooks] = useState<Book[]>([]);
   const [loadingBooks, setLoadingBooks] = useState(false);
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
@@ -156,15 +148,24 @@ export default function AUPage() {
   // ====== lấy session để có userId ======
   useEffect(() => {
     let cancelled = false;
+
     async function loadSession() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
       if (cancelled) return;
-      if (!session) return;
+
+      if (!session) {
+        setUserId(null);
+        return;
+      }
+
       setUserId(session.user.id);
     }
+
     loadSession();
+
     return () => {
       cancelled = true;
     };
@@ -184,14 +185,17 @@ export default function AUPage() {
         .order("title", { ascending: true });
 
       if (cancelled) return;
+
       if (error) {
         console.error("Load courses error:", error);
         return;
       }
+
       setCourses(data ?? []);
     }
 
     loadCourses();
+
     return () => {
       cancelled = true;
     };
@@ -216,14 +220,17 @@ export default function AUPage() {
         .order("order_in_course", { ascending: true });
 
       if (cancelled) return;
+
       if (error) {
         console.error("Load lessons error:", error);
         return;
       }
+
       setLessons(data ?? []);
     }
 
     loadLessons();
+
     return () => {
       cancelled = true;
     };
@@ -239,7 +246,9 @@ export default function AUPage() {
       setSavedAus([]);
       return;
     }
+
     setLoadingSaved(true);
+
     const { data, error } = await supabase
       .from("assessment_units")
       .select(
@@ -278,13 +287,14 @@ export default function AUPage() {
       return;
     }
 
-    const courseId = context.course_id!;
-    const lessonId = context.lesson_id!;
+    const courseId = context.course_id;
+    const lessonId = context.lesson_id;
 
     let cancelled = false;
 
     async function loadLLOs() {
       setLoadingLLOs(true);
+
       const { data, error } = await supabase
         .from("llos")
         .select("id, text, bloom_suggested, level_suggested")
@@ -301,11 +311,12 @@ export default function AUPage() {
       } else {
         const list = data ?? [];
         setLlos(list);
-        // auto-chọn LLO đầu tiên nếu chưa có
+
         if (!selectedLloId && list.length > 0) {
           setSelectedLloId(list[0].id);
         }
       }
+
       setLoadingLLOs(false);
     }
 
@@ -317,43 +328,78 @@ export default function AUPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, context?.course_id, context?.lesson_id, supabase]);
 
-  // ====== load Books (sách đã ingest vào DB) cho user ======
+  // ====== load Books qua API /api/books/list ======
   useEffect(() => {
-    if (!userId) {
-      setBooks([]);
-      return;
-    }
-
     let cancelled = false;
 
     async function loadBooks() {
       setLoadingBooks(true);
-      const { data, error } = await supabase
-        .from("books")
-        .select(
-          "id, title, subtitle, specialty_id, specialty_name, status, is_active"
-        )
-        .eq("owner_id", userId)
-        .eq("is_active", true)
-        .eq("status", "ready")
-        .order("updated_at", { ascending: false });
 
-      if (cancelled) return;
+      try {
+        const res = await fetch("/api/books/list", {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+        });
 
-      if (error) {
-        console.error("Load books error:", error);
-        setBooks([]);
-      } else {
-        setBooks((data || []) as Book[]);
+        const rawText = await res.text();
+        let payload: any = null;
+
+        try {
+          payload = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          payload = null;
+        }
+
+        if (!res.ok) {
+          console.error("Load books API failed:", {
+            status: res.status,
+            statusText: res.statusText,
+            rawText,
+            payload,
+          });
+
+          if (!cancelled) {
+            setBooks([]);
+            setError(
+              payload?.error ||
+                payload?.detail ||
+                `Không tải được danh sách sách (HTTP ${res.status}).`
+            );
+          }
+          return;
+        }
+
+        const list = Array.isArray(payload?.data) ? payload.data : [];
+
+        if (!cancelled) {
+          setBooks(list as Book[]);
+        }
+      } catch (e: any) {
+        console.error("Load books via /api/books/list error:", e);
+
+        if (!cancelled) {
+          setBooks([]);
+          setError(
+            e?.message || "Lỗi mạng hoặc lỗi server khi tải danh sách sách."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingBooks(false);
+        }
       }
-      setLoadingBooks(false);
     }
 
     loadBooks();
+
     return () => {
       cancelled = true;
     };
-  }, [userId, supabase]);
+  }, []);
 
   // ====== persist context vào localStorage ======
   function persistContext(next: WizardContext) {
@@ -365,7 +411,6 @@ export default function AUPage() {
 
   // ====== Helper: lấy danh sách LLO hiện tại ======
   function getCurrentLloLines(): string[] {
-    // Ưu tiên LLO đang chọn
     if (selectedLloId && llos.length > 0) {
       const l = llos.find((x) => x.id === selectedLloId);
       if (l?.text?.trim()) {
@@ -373,13 +418,11 @@ export default function AUPage() {
       }
     }
 
-    // Nếu chưa chọn cụ thể LLO, nhưng vẫn muốn dùng toàn bộ (fallback cũ)
     const fromDb = llos
       .map((l) => (l.text || "").trim())
       .filter((t) => t.length > 0);
     if (fromDb.length > 0) return fromDb;
 
-    // Fallback: lấy từ context.llos_text (case cũ)
     if (context?.llos_text) {
       const fromContext = context.llos_text
         .split("\n")
@@ -401,13 +444,11 @@ export default function AUPage() {
       ...context,
       course_id: courseId,
       course_title: course?.title,
-      // reset lesson khi đổi học phần
       lesson_id: undefined,
       lesson_title: undefined,
     };
 
     persistContext(updated);
-    // reset AU tạm & AU đã lưu & LLO (sẽ reload bằng effect)
     setAus([]);
     setSavedAus([]);
     setLlos([]);
@@ -429,7 +470,6 @@ export default function AUPage() {
     };
 
     persistContext(updated);
-    // reset AU tạm & AU đã lưu & LLO (sẽ reload bằng effect)
     setAus([]);
     setSavedAus([]);
     setLlos([]);
@@ -442,16 +482,13 @@ export default function AUPage() {
   function handleFilesChange(e: ChangeEvent<HTMLInputElement>) {
     const fileList = e.target.files;
     if (!fileList) return;
-
-    const arr = Array.from(fileList);
-    setFiles(arr);
+    setFiles(Array.from(fileList));
   }
 
   function handleRemoveFile(index: number) {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
-  // ====== Tiếp tục sang Bước 3: bỏ điều kiện, click là qua thẳng ======
   function handleContinue() {
     setError(null);
     setMsg(null);
@@ -534,7 +571,7 @@ export default function AUPage() {
       return;
     }
 
-    const llos_text_to_use = lloLines.join("\n");
+    const llosTextToUse = lloLines.join("\n");
 
     setGenLoading(true);
     setMsg(null);
@@ -543,42 +580,38 @@ export default function AUPage() {
 
     try {
       const formData = new FormData();
-      formData.append("llos_text", llos_text_to_use);
-
-      // số lượng AU cần sinh
+      formData.append("llos_text", llosTextToUse);
       formData.append(
         "au_count",
         String(Math.max(1, Math.min(40, auCount || 8)))
       );
-
-      // nguồn sinh AU
       formData.append("source_mode", sourceMode);
 
-      if (context.learner_level)
+      if (context.learner_level) {
         formData.append("learner_level", context.learner_level);
+      }
       if (bloomToUse) {
         formData.append("bloom_level", bloomToUse);
       }
-      if (context.specialty_name)
+      if (context.specialty_name) {
         formData.append("specialty_name", context.specialty_name);
-      if (context.course_title)
+      }
+      if (context.course_title) {
         formData.append("course_title", context.course_title);
-      if (context.lesson_title)
+      }
+      if (context.lesson_title) {
         formData.append("lesson_title", context.lesson_title);
+      }
 
-      // Nguồn 1 – Tài liệu upload
       if (sourceMode === "upload") {
         for (const file of files) {
           formData.append("files", file);
         }
       }
 
-      // Nguồn 2 – Sách trong DB
       if (sourceMode === "book" && selectedBookId) {
         formData.append("book_id", selectedBookId);
       }
-
-      // Nguồn 3 – GPT: không cần file/book, chỉ dùng context + LLO
 
       const res = await fetch("/api/au-gen", {
         method: "POST",
@@ -587,6 +620,7 @@ export default function AUPage() {
 
       const rawText = await res.text();
       let data: any = null;
+
       try {
         data = rawText ? JSON.parse(rawText) : null;
       } catch {
@@ -613,6 +647,7 @@ export default function AUPage() {
 
       const rawAus = Array.isArray(data?.aus) ? data.aus : [];
       const existingKeys = new Set<string>();
+
       savedAus.forEach((a) => {
         existingKeys.add(normalizeCore(a.core_statement || ""));
       });
@@ -624,6 +659,7 @@ export default function AUPage() {
         if (!core.trim()) continue;
         if (existingKeys.has(norm)) continue;
         existingKeys.add(norm);
+
         mapped.push({
           core_statement: core,
           short_explanation: au.short_explanation ?? null,
@@ -725,12 +761,12 @@ export default function AUPage() {
 
       const rows = selected.map((au) => ({
         owner_id: session.user.id,
-        course_id: context.course_id!,
-        lesson_id: context.lesson_id!,
+        course_id: context.course_id,
+        lesson_id: context.lesson_id,
         llo_id: selectedLloId,
         core_statement: au.core_statement.trim(),
-        short_explanation: (au.short_explanation || "")?.trim() || null,
-        bloom_min: (au.bloom_min || "")?.trim() || null,
+        short_explanation: (au.short_explanation || "").trim() || null,
+        bloom_min: (au.bloom_min || "").trim() || null,
         status: "draft",
       }));
 
@@ -750,8 +786,8 @@ export default function AUPage() {
 
       await reloadSavedAus(
         userId || session.user.id,
-        context.course_id!,
-        context.lesson_id!
+        context.course_id,
+        context.lesson_id
       );
     } catch (e: any) {
       console.error(e);
@@ -789,7 +825,6 @@ export default function AUPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6 pb-28">
-      {/* Header */}
       <div className="flex flex-col gap-2">
         <div>
           <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
@@ -803,7 +838,6 @@ export default function AUPage() {
         </div>
       </div>
 
-      {/* Card chọn Học phần / Bài học */}
       <AUContextSelector
         context={context}
         courses={courses}
@@ -812,7 +846,6 @@ export default function AUPage() {
         onChangeLesson={handleChangeLesson}
       />
 
-      {/* Card: Thông tin bối cảnh + LLO */}
       <AULloPanel
         context={context}
         llos={llos}
@@ -822,7 +855,6 @@ export default function AUPage() {
         currentLloLines={currentLloLines}
       />
 
-      {/* Card: Nguồn sinh AU (Upload / Book / GPT) + nút Sinh AU */}
       <AUSourceCard
         sourceMode={sourceMode}
         onChangeSourceMode={setSourceMode}
@@ -839,7 +871,6 @@ export default function AUPage() {
         genLoading={genLoading}
       />
 
-      {/* Thông báo */}
       {error && (
         <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl px-4 py-3">
           {error}
@@ -851,7 +882,6 @@ export default function AUPage() {
         </div>
       )}
 
-      {/* AU đã lưu trước đó */}
       <AUSavedList
         savedAus={savedAus}
         loadingSaved={loadingSaved}
@@ -859,7 +889,6 @@ export default function AUPage() {
         onDeleteSavedAU={handleDeleteSavedAU}
       />
 
-      {/* Kết quả AU mới sinh ra */}
       {aus.length > 0 && (
         <AUNewList
           aus={aus}
@@ -871,7 +900,6 @@ export default function AUPage() {
         />
       )}
 
-      {/* Footer navigation */}
       <AUFooterNav
         onBackStep1={() => router.push("/wizard/context")}
         onNextStep3={handleContinue}
