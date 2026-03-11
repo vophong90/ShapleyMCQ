@@ -1,7 +1,9 @@
 // lib/supabaseBrowser.ts
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 declare global {
+  // eslint-disable-next-line no-var
   var _supabaseBrowserClient: SupabaseClient | undefined;
 }
 
@@ -19,13 +21,7 @@ export function getSupabaseBrowser(): SupabaseClient {
     );
   }
 
-  const client = createClient(url, anon, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-    },
-  });
+  const client = createBrowserClient(url, anon);
 
   globalThis._supabaseBrowserClient = client;
   return client;
