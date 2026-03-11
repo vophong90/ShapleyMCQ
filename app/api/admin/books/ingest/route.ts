@@ -32,9 +32,6 @@ function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-/**
- * Chunk text theo đoạn, giữ overlap nhẹ để tránh mất ngữ cảnh.
- */
 function chunkText(
   text: string,
   targetChars = 900,
@@ -58,7 +55,6 @@ function chunkText(
   };
 
   for (const p of paras) {
-    // paragraph quá dài -> cắt nhỏ
     if (p.length > targetChars * 1.8) {
       if (buf.trim()) {
         pushBuf();
@@ -89,45 +85,91 @@ function chunkText(
 
 function modelToDim(model: string): number | null {
   const m = (model || "").trim();
-  // OpenAI embeddings phổ biến:
-  // - text-embedding-3-small: 1536
-  // - text-embedding-3-large: 3072
   if (m === "text-embedding-3-small") return 1536;
   if (m === "text-embedding-3-large") return 3072;
-  return null; // không đoán được
+  return null;
 }
 
-async function requireAdmin(req: NextRequest) {
-  // Dùng route client để đọc session cookie của user
-  const supabase = await getRouteClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+type RequireAdminResult =
+  | { ok: true; user_id: string }
+  | { ok: false; status: number; error: string; detail?: any };
 
-  if (!session) {
-    return { ok: false, status: 401, error: "Unauthenticated" as const };
+async function requireAdmin(req: NextRequest): Promise<RequireAdminResult> {
+  const supabaseAdmin = getSupabaseAdmin();
+  let userId: string | null = null;
+
+  try {
+    // 1) Ưu tiên bearer token
+    const authHeader =
+      req.headers.get("authorization") || req.headers.get("Authorization");
+
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice("Bearer ".length).trim();
+
+      if (token) {
+        const {
+          data: { user },
+          error,
+        } = await supabaseAdmin.auth.getUser(token);
+
+        if (!error && user) {
+          userId = user.id;
+        }
+      }
+    }
+
+    // 2) Fallback cookie/session
+    if (!userId) {
+      const supabase = await getRouteClient();
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+
+      if (!error && user) {
+        userId = user.id;
+      }
+    }
+
+    if (!userId) {
+      return { ok: false, status: 401, error: "Unauthenticated" };
+    }
+
+    // 3) Check admin bằng admin client để tránh RLS
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      return {
+        ok: false,
+        status: 403,
+        error: "No profile / forbidden",
+        detail: profileError?.message || null,
+      };
+    }
+
+    const role = String((profile as any).role || "").trim().toLowerCase();
+    if (role !== "admin") {
+      return {
+        ok: false,
+        status: 403,
+        error: "Admin only",
+        detail: { role },
+      };
+    }
+
+    return { ok: true, user_id: userId };
+  } catch (e: any) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Unauthenticated",
+      detail: e?.message || null,
+    };
   }
-
-  // Hỗ trợ cả 2 cột: role hoặc system_role (tùy app bạn đang dùng)
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("id, role")
-    .eq("id", session.user.id)
-    .maybeSingle();
-
-  if (error || !profile) {
-    return { ok: false, status: 403, error: "No profile / forbidden" as const };
-  }
-
-  const role = (profile as any).role || null;
-
-  const isAdmin = ["admin"].includes(String(role || ""));
-
-  if (!isAdmin) {
-    return { ok: false, status: 403, error: "Admin only" as const };
-  }
-
-  return { ok: true, user_id: session.user.id };
 }
 
 /* =========================================
@@ -166,6 +208,7 @@ async function embedBatch(input: string[], model: string) {
       res.headers.get("x-request-id") ||
       res.headers.get("x-openai-request-id") ||
       null;
+
     throw new Error(
       `OpenAI embeddings ${res.status}${
         reqId ? ` (request_id=${reqId})` : ""
@@ -183,13 +226,9 @@ async function embedBatch(input: string[], model: string) {
 
 type Body = {
   book_id?: string;
-
-  // optional overrides
-  chunk_target_chars?: number; // default 900
-  chunk_overlap_chars?: number; // default 150
-  embedding_model?: string; // default env hoặc DEFAULT_EMBED_MODEL
-
-  // nếu true: xóa chunks cũ rồi ingest lại
+  chunk_target_chars?: number;
+  chunk_overlap_chars?: number;
+  embedding_model?: string;
   rebuild?: boolean;
 };
 
@@ -198,20 +237,24 @@ type Body = {
 ========================================= */
 
 export async function POST(req: NextRequest) {
-  // ✅ admin-only
   const adminCheck = await requireAdmin(req);
   if (!adminCheck.ok) {
-    return json({ error: adminCheck.error }, { status: adminCheck.status });
+    return json(
+      { error: adminCheck.error, detail: adminCheck.detail ?? null },
+      { status: adminCheck.status }
+    );
   }
 
   const supabaseAdmin = getSupabaseAdmin();
-
   let jobId: string | null = null;
 
   try {
     const body = (await req.json().catch(() => ({}))) as Body;
     const book_id = (body.book_id || "").trim();
-    if (!book_id) return json({ error: "Missing book_id" }, { status: 400 });
+
+    if (!book_id) {
+      return json({ error: "Missing book_id" }, { status: 400 });
+    }
 
     // 1) Load book metadata
     const { data: book, error: bookErr } = await supabaseAdmin
@@ -257,9 +300,10 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
     jobId = job.id;
 
-    // 3) Tạo signed URL để /api/file-extract tự tải file (tránh base64 quá lớn)
+    // 3) Tạo signed URL để /api/file-extract tự tải file
     await supabaseAdmin
       .from("book_ingest_jobs")
       .update({ step: "extract_signed_url" })
@@ -267,7 +311,7 @@ export async function POST(req: NextRequest) {
 
     const { data: signed, error: signedErr } = await supabaseAdmin.storage
       .from(book.storage_bucket)
-      .createSignedUrl(book.storage_path, 60 * 10); // 10 phút
+      .createSignedUrl(book.storage_path, 60 * 10);
 
     if (signedErr || !signed?.signedUrl) {
       await supabaseAdmin
@@ -293,7 +337,7 @@ export async function POST(req: NextRequest) {
       guessExtFromName(book.title) ||
       "bin";
 
-    // 4) Gọi /api/file-extract với file_url
+    // 4) Gọi /api/file-extract
     await supabaseAdmin
       .from("book_ingest_jobs")
       .update({ step: "extract" })
@@ -365,6 +409,7 @@ export async function POST(req: NextRequest) {
     const overlapChars = clampInt(body.chunk_overlap_chars ?? 150, 0, 600);
 
     const chunks = chunkText(text, targetChars, overlapChars);
+
     if (chunks.length === 0) {
       await supabaseAdmin
         .from("book_ingest_jobs")
@@ -378,7 +423,7 @@ export async function POST(req: NextRequest) {
       return json({ error: "No chunks produced" }, { status: 400 });
     }
 
-    // 6) Optional rebuild: delete old chunks first
+    // 6) Optional rebuild
     if (body.rebuild) {
       await supabaseAdmin
         .from("book_ingest_jobs")
@@ -423,21 +468,22 @@ export async function POST(req: NextRequest) {
     const embeddingDim =
       modelToDim(embeddingModel) ?? (book.embedding_dim ?? null);
 
-    // Insert theo batch để tránh request quá lớn
-    const BATCH = 64; // tuỳ serverless, có thể giảm 32 nếu timeout
+    const BATCH = 64;
     let inserted = 0;
 
     for (let i = 0; i < chunks.length; i += BATCH) {
       const slice = chunks.slice(i, i + BATCH);
 
-      // Embed
       const embeddings = await embedBatch(
         slice.map((c) => c.content),
         embeddingModel
       );
 
-      // (optional) sanity-check dim nếu đoán được
-      if (embeddingDim && embeddings[0] && embeddings[0].length !== embeddingDim) {
+      if (
+        embeddingDim &&
+        embeddings[0] &&
+        embeddings[0].length !== embeddingDim
+      ) {
         throw new Error(
           `Embedding dim mismatch: expected ${embeddingDim}, got ${embeddings[0].length} (model=${embeddingModel})`
         );
@@ -466,7 +512,7 @@ export async function POST(req: NextRequest) {
       inserted += rows.length;
     }
 
-    // 8) Update books: status ready + chunk_count + embedding meta
+    // 8) Update books
     await supabaseAdmin
       .from("book_ingest_jobs")
       .update({ step: "finalize" })
