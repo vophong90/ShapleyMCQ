@@ -51,7 +51,6 @@ export function AUSourceCard({
         Chọn nguồn sinh Assessment Units (AU)
       </div>
 
-      {/* Radio chọn nguồn */}
       <div className="grid md:grid-cols-3 gap-3 text-xs">
         <button
           type="button"
@@ -74,7 +73,7 @@ export function AUSourceCard({
             </span>
           </div>
           <p className="text-[11px] text-slate-600">
-            PDF, Word, PowerPoint hoặc hình ảnh của bài giảng/ tài liệu tham khảo.
+            PDF, Word, PowerPoint hoặc hình ảnh của bài giảng/tài liệu tham khảo.
           </p>
         </button>
 
@@ -99,7 +98,8 @@ export function AUSourceCard({
             </span>
           </div>
           <p className="text-[11px] text-slate-600">
-            Dùng nội dung từ các book đã ingest vào DB (status &apos;ready&apos;).
+            Dùng nội dung từ các sách đã ingest xong và đang được bật sử dụng trong
+            hệ thống.
           </p>
         </button>
 
@@ -124,14 +124,13 @@ export function AUSourceCard({
             </span>
           </div>
           <p className="text-[11px] text-slate-600">
-            GPT dùng kiến thức nền + LLO/ bối cảnh để sinh AU, không dựa trên file cụ thể.
+            GPT dùng kiến thức nền + LLO/bối cảnh để sinh AU, không dựa trên file
+            cụ thể.
           </p>
         </button>
       </div>
 
-      {/* Panel chi tiết từng nguồn */}
       <div className="grid md:grid-cols-2 gap-4 items-start">
-        {/* Cột trái: Upload hoặc Book hoặc mô tả GPT */}
         <div>
           {sourceMode === "upload" && (
             <div>
@@ -151,8 +150,8 @@ export function AUSourceCard({
                          hover:file:bg-brand-100"
               />
               <p className="mt-1 text-[11px] text-slate-500">
-                Chấp nhận: PDF, Word, PowerPoint, hình ảnh. File không được lưu lên
-                server mà chỉ dùng để GPT phân tích trong phiên làm việc này.
+                Chấp nhận: PDF, Word, PowerPoint, hình ảnh. File không được lưu
+                lên server mà chỉ dùng để GPT phân tích trong phiên làm việc này.
               </p>
 
               {files.length > 0 && (
@@ -192,13 +191,16 @@ export function AUSourceCard({
               <div className="text-xs font-medium text-slate-700 mb-1">
                 Chọn sách làm nguồn sinh AU
               </div>
+
               {loadingBooks ? (
                 <p className="text-[11px] text-slate-500">
                   Đang tải danh sách sách…
                 </p>
               ) : books.length === 0 ? (
                 <p className="text-[11px] text-slate-500">
-                  Chưa có book &quot;ready&quot; nào trong hệ thống cho user hiện tại.
+                  Hiện chưa có sách nào ở trạng thái sẵn sàng sử dụng
+                  (<code className="mx-1">ready</code>) và đang bật hoạt động trong
+                  hệ thống.
                 </p>
               ) : (
                 <select
@@ -218,9 +220,11 @@ export function AUSourceCard({
                   ))}
                 </select>
               )}
+
               <p className="mt-1 text-[11px] text-slate-500">
-                Hệ thống sẽ trích nội dung từ các chunk của book này (bảng
-                <code className="mx-1">book_chunks</code>) để GPT sinh AU.
+                Danh sách này lấy từ các sách công khai đang hoạt động trong hệ
+                thống. Khi chọn một sách, hệ thống sẽ trích nội dung từ bảng
+                <code className="mx-1">book_chunks</code> để GPT sinh AU.
               </p>
             </div>
           )}
@@ -232,18 +236,17 @@ export function AUSourceCard({
               </div>
               <p className="text-[11px] text-slate-600">
                 Chế độ này không sử dụng file upload hay sách trong DB. GPT sẽ
-                dựa trên LLO, bậc học, Bloom và thông tin bối cảnh để sinh AU
-                theo kiến thức nền của mô hình.
+                dựa trên LLO, bậc học, Bloom và thông tin bối cảnh để sinh AU theo
+                kiến thức nền của mô hình.
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Thích hợp khi anh muốn có bộ AU &quot;khung&quot; trước, rồi sau
-                đó tinh chỉnh lại theo tài liệu cụ thể.
+                Thích hợp khi anh muốn có bộ AU khung trước, rồi sau đó tinh
+                chỉnh lại theo tài liệu cụ thể.
               </p>
             </div>
           )}
         </div>
 
-        {/* Cột phải: Số lượng AU cần sinh */}
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
           <label className="block text-[11px] font-medium text-slate-600 mb-1">
             Số lượng AU cần sinh
@@ -254,9 +257,7 @@ export function AUSourceCard({
               min={1}
               max={40}
               value={auCount}
-              onChange={(e) =>
-                onChangeAuCount(Number(e.target.value || 8))
-              }
+              onChange={(e) => onChangeAuCount(Number(e.target.value || 8))}
               className="w-24 border rounded-lg px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 bg-white"
             />
             <span className="text-[11px] text-slate-500">
