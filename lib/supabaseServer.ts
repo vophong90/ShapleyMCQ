@@ -2,8 +2,8 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-export function getRouteClient() {
-  const cookieStore = cookies();
+export async function getRouteClient() {
+  const cookieStore = await cookies();
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,15 +14,22 @@ export function getRouteClient() {
           return cookieStore.get(name)?.value;
         },
         set(name: string, value: string, options: any) {
-          cookieStore.set({ name, value, ...options });
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch {
+            // Có thể bị gọi trong context chỉ đọc cookie
+          }
         },
         remove(name: string, options: any) {
-          cookieStore.set({ name, value: "", ...options });
+          try {
+            cookieStore.set({ name, value: "", ...options });
+          } catch {
+            // Có thể bị gọi trong context chỉ đọc cookie
+          }
         },
       },
     }
   );
 }
 
-// alias để khỏi lệch tên import
 export const getSupabaseServer = getRouteClient;
