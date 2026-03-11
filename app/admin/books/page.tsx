@@ -15,8 +15,6 @@ type BookRow = {
 };
 
 const DEFAULT_BUCKET = "books";
-
-// Pagination
 const PAGE_SIZE = 10;
 
 function safeFileName(name: string) {
@@ -32,11 +30,19 @@ async function uploadResumableToSupabase(params: {
   bucket: string;
   objectName: string;
   anonKey: string;
-  accessToken: string; // <-- session.access_token
+  accessToken: string;
   file: File;
   onProgress?: (pct: number) => void;
 }) {
-  const { tusEndpoint, bucket, objectName, anonKey, accessToken, file, onProgress } = params;
+  const {
+    tusEndpoint,
+    bucket,
+    objectName,
+    anonKey,
+    accessToken,
+    file,
+    onProgress,
+  } = params;
 
   return new Promise<void>((resolve, reject) => {
     const upload = new tus.Upload(file, {
@@ -44,7 +50,7 @@ async function uploadResumableToSupabase(params: {
       retryDelays: [0, 3000, 5000, 10000, 20000],
       headers: {
         apikey: anonKey,
-        authorization: `Bearer ${accessToken}`, // ✅ dùng access_token
+        authorization: `Bearer ${accessToken}`,
       },
       metadata: {
         bucketName: bucket,
@@ -56,7 +62,8 @@ async function uploadResumableToSupabase(params: {
       removeFingerprintOnSuccess: true,
       chunkSize: 6 * 1024 * 1024,
       onError: reject,
-      onProgress: (u, t) => onProgress?.(Number(((u / t) * 100).toFixed(2))),
+      onProgress: (uploaded, total) =>
+        onProgress?.(Number(((uploaded / total) * 100).toFixed(2))),
       onSuccess: () => resolve(),
     });
 
@@ -72,7 +79,6 @@ export default function AdminBooksPage() {
   const [list, setList] = useState<BookRow[]>([]);
   const [q, setQ] = useState("");
 
-  // create + upload + attach DB + ingest (one flow)
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [specialtyName, setSpecialtyName] = useState("");
@@ -80,26 +86,64 @@ export default function AdminBooksPage() {
   const [creatingAll, setCreatingAll] = useState(false);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
 
-  // pagination state
   const [page, setPage] = useState(1);
 
-  // still keep supabase browser client (auth cookie / other uses)
   const supabase = useMemo(() => getSupabaseBrowser(), []);
+
+  async function getAccessTokenOrThrow() {
+    const { data: sessData, error: sessErr } = await supabase.auth.getSession();
+    const accessToken = sessData?.session?.access_token;
+
+    if (sessErr || !accessToken) {
+      throw new Error("Không lấy được access token. Bạn đăng nhập lại.");
+    }
+
+    return accessToken;
+  }
+
+  async function authedFetch(
+    input: string,
+    init: RequestInit = {},
+    accessToken?: string
+  ) {
+    const token = accessToken || (await getAccessTokenOrThrow());
+
+    const headers = new Headers(init.headers || {});
+    if (!headers.has("Content-Type") && init.body) {
+      headers.set("Content-Type", "application/json");
+    }
+    headers.set("Authorization", `Bearer ${token}`);
+
+    return fetch(input, {
+      ...init,
+      credentials: "include",
+      headers,
+    });
+  }
 
   async function loadBooks(keyword: string) {
     setLoading(true);
-    const res = await fetch(
-      "/api/admin/books/list?keyword=" + encodeURIComponent(keyword || "")
-    );
-    const json = await res.json().catch(() => ({}));
-    setLoading(false);
+    try {
+      const token = await getAccessTokenOrThrow();
+      const res = await authedFetch(
+        "/api/admin/books/list?keyword=" + encodeURIComponent(keyword || ""),
+        { method: "GET" },
+        token
+      );
+      const json = await res.json().catch(() => ({}));
 
-    if (!res.ok || json?.error) {
-      alert("Lỗi tải books: " + (json?.error || res.statusText));
-      return;
+      if (!res.ok || json?.error) {
+        alert("Lỗi tải books: " + (json?.error || res.statusText));
+        setLoading(false);
+        return;
+      }
+
+      setList((json?.data || []) as BookRow[]);
+    } catch (e: any) {
+      alert("Lỗi tải books: " + String(e?.message || e));
+    } finally {
+      setLoading(false);
     }
-
-    setList((json?.data || []) as BookRow[]);
   }
 
   useEffect(() => {
@@ -107,7 +151,6 @@ export default function AdminBooksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset page when query changes or list size changes
   useEffect(() => {
     setPage(1);
   }, [q, list.length]);
@@ -133,7 +176,7 @@ export default function AdminBooksPage() {
     }
     if (!supabase) {
       alert(
-        "Thiếu NEXT_PUBLIC_SUPABASE_URL hoặc NEXT_PUBLIC_SUPABASE_ANON_KEY (client không tạo được Supabase)."
+        "Thiếu NEXT_PUBLIC_SUPABASE_URL hoặc NEXT_PUBLIC_SUPABASE_ANON_KEY."
       );
       return;
     }
@@ -142,19 +185,22 @@ export default function AdminBooksPage() {
     setProgressMsg("1/4 Đang tạo metadata...");
 
     try {
-      /* =========================================
-         1) Create metadata (DB)
-      ========================================= */
-      const createRes = await fetch("/api/admin/books/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          specialty_name: specialtyName.trim() || null,
-          mime_type: file.type || null,
-          file_size: file.size || null,
-        }),
-      });
+      const accessToken = await getAccessTokenOrThrow();
+
+      /* 1) Create metadata */
+      const createRes = await authedFetch(
+        "/api/admin/books/create",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: title.trim(),
+            specialty_name: specialtyName.trim() || null,
+            mime_type: file.type || null,
+            file_size: file.size || null,
+          }),
+        },
+        accessToken
+      );
 
       const createJson = await createRes.json().catch(() => ({}));
 
@@ -163,7 +209,6 @@ export default function AdminBooksPage() {
         alert(
           "Tạo book thất bại: " + (createJson?.error || createRes.statusText)
         );
-        setCreatingAll(false);
         return;
       }
 
@@ -173,26 +218,25 @@ export default function AdminBooksPage() {
       if (!bookId) {
         setProgressMsg(null);
         alert("Tạo book OK nhưng không nhận được book_id từ API create.");
-        setCreatingAll(false);
         return;
       }
 
-      /* =========================================
-         2) Resumable upload via signed TUS token
-      ========================================= */
+      /* 2) Upload init */
       setProgressMsg("2/4 Đang chuẩn bị upload (signed resumable)...");
 
-      // 2.1) get signed upload token + objectName
-      const initRes = await fetch("/api/admin/books/upload-init", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          book_id: bookId,
-          file_name: safeFileName(file.name || `${title.trim()}`),
-          content_type: file.type || null,
-          upsert: true,
-        }),
-      });
+      const initRes = await authedFetch(
+        "/api/admin/books/upload-init",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            book_id: bookId,
+            file_name: safeFileName(file.name || title.trim()),
+            content_type: file.type || null,
+            upsert: true,
+          }),
+        },
+        accessToken
+      );
 
       const initJson = await initRes.json().catch(() => ({}));
 
@@ -201,37 +245,30 @@ export default function AdminBooksPage() {
         alert(
           "Upload init thất bại: " + (initJson?.error || initRes.statusText)
         );
-        setCreatingAll(false);
         return;
       }
-      
+
       const tusEndpoint: string = initJson.tusEndpoint;
-      const token: string = initJson.token;
       const objectName: string = initJson.objectName;
       const bucket: string = initJson.bucket || DEFAULT_BUCKET;
-
       const anonKey: string =
-        initJson.anonKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      
+        initJson.anonKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+      if (!tusEndpoint || !objectName) {
+        setProgressMsg(null);
+        alert("Upload init thiếu tusEndpoint hoặc objectName.");
+        return;
+      }
+
       if (!anonKey) {
         setProgressMsg(null);
         alert("Thiếu anonKey (NEXT_PUBLIC_SUPABASE_ANON_KEY).");
-        setCreatingAll(false);
         return;
       }
 
-      const { data: sessData, error: sessErr } = await supabase.auth.getSession();
-      const accessToken = sessData?.session?.access_token;
-      
-      if (sessErr || !accessToken) {
-        setProgressMsg(null);
-        alert("Không lấy được session access_token. Bạn đăng nhập lại.");
-        setCreatingAll(false);
-        return;
-      }
-
-      // 2.2) do upload (resumable)
+      /* 2.2) Upload */
       setProgressMsg("2/4 Đang upload file (resumable)... 0%");
+
       await uploadResumableToSupabase({
         tusEndpoint,
         bucket,
@@ -243,24 +280,24 @@ export default function AdminBooksPage() {
           setProgressMsg(`2/4 Đang upload file (resumable)... ${pct}%`),
       });
 
-      // after upload, storage_path = objectName
       const storage_path = objectName;
 
-      /* =========================================
-         3) Attach DB: update storage_bucket/path + file metadata
-      ========================================= */
+      /* 3) Attach DB */
       setProgressMsg("3/4 Đang cập nhật DB (storage_bucket/path + metadata)...");
 
-      const attachRes = await fetch("/api/admin/books/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          book_id: bookId,
-          storage_path,
-          mime_type: file.type || null,
-          file_size: file.size || null,
-        }),
-      });
+      const attachRes = await authedFetch(
+        "/api/admin/books/upload",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            book_id: bookId,
+            storage_path,
+            mime_type: file.type || null,
+            file_size: file.size || null,
+          }),
+        },
+        accessToken
+      );
 
       const attachJson = await attachRes.json().catch(() => ({}));
 
@@ -271,26 +308,26 @@ export default function AdminBooksPage() {
             (attachJson?.error || attachRes.statusText) +
             (attachJson?.detail ? ` | ${attachJson.detail}` : "")
         );
-        setCreatingAll(false);
         return;
       }
 
-      /* =========================================
-         4) Ingest
-      ========================================= */
+      /* 4) Ingest */
       setProgressMsg("4/4 Đang ingest (tách đoạn + embedding + lưu chunks)...");
 
-      const ingestRes = await fetch("/api/admin/books/ingest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          book_id: bookId,
-          rebuild: true,
-          embedding_model: "text-embedding-3-small",
-          chunk_target_chars: 900,
-          chunk_overlap_chars: 150,
-        }),
-      });
+      const ingestRes = await authedFetch(
+        "/api/admin/books/ingest",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            book_id: bookId,
+            rebuild: true,
+            embedding_model: "text-embedding-3-small",
+            chunk_target_chars: 900,
+            chunk_overlap_chars: 150,
+          }),
+        },
+        accessToken
+      );
 
       const ingestJson = await ingestRes.json().catch(() => ({}));
 
@@ -301,7 +338,6 @@ export default function AdminBooksPage() {
             (ingestJson?.error || ingestRes.statusText) +
             (ingestJson?.detail ? ` | ${ingestJson.detail}` : "")
         );
-        setCreatingAll(false);
         return;
       }
 
@@ -311,12 +347,10 @@ export default function AdminBooksPage() {
         }`
       );
 
-      // reset form
       setTitle("");
       setSpecialtyName("");
       setFile(null);
 
-      // reload list
       await loadBooks(q);
     } catch (e: any) {
       setProgressMsg(null);
@@ -331,7 +365,6 @@ export default function AdminBooksPage() {
     [title, file, creatingAll]
   );
 
-  // Pagination derived
   const total = list.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(Math.max(page, 1), totalPages);
@@ -344,12 +377,11 @@ export default function AdminBooksPage() {
       <div>
         <h2 className="text-lg font-bold text-slate-900">Books</h2>
         <p className="text-sm text-slate-600">
-          1 nút: Tạo metadata → Upload resumable (bucket:{" "}
-          <b>{DEFAULT_BUCKET}</b>) → API cập nhật DB → ingest.
+          1 nút: Tạo metadata → Upload resumable (bucket: <b>{DEFAULT_BUCKET}</b>)
+          → API cập nhật DB → ingest.
         </p>
       </div>
 
-      {/* Create ALL: metadata + upload + attach DB + ingest */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-3">
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
           Tạo sách (tự chạy đủ)
@@ -433,7 +465,6 @@ export default function AdminBooksPage() {
         </p>
       </div>
 
-      {/* List */}
       <div className="bg-white border rounded-2xl shadow-sm p-5 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -514,7 +545,6 @@ export default function AdminBooksPage() {
           </table>
         </div>
 
-        {/* Pagination controls */}
         <div className="flex items-center justify-between pt-2">
           <div className="text-xs text-slate-500">
             Trang{" "}
