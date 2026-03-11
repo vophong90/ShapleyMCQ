@@ -6,82 +6,128 @@ import { getRouteClient } from "@/lib/supabaseServer";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const BOOKS_BUCKET = "books";
+
 function json(body: any, init?: ResponseInit) {
   return NextResponse.json(body, init);
 }
 
-const BOOKS_BUCKET = "books";
+type RequireAdminResult =
+  | { ok: true; user_id: string }
+  | { ok: false; status: number; error: string; detail?: any };
 
-/**
- * Admin check: đọc session cookie + profile.role
- * Lưu ý: getRouteClient của bạn trả Promise => phải await
- */
-async function requireAdmin(req: NextRequest) {
-  const supabase = await getRouteClient();
+async function requireAdmin(req: NextRequest): Promise<RequireAdminResult> {
+  const supabaseAdmin = getSupabaseAdmin();
+  let userId: string | null = null;
 
-  const {
-    data: { session },
-    error: sessErr,
-  } = await supabase.auth.getSession();
+  try {
+    // 1) Ưu tiên bearer token
+    const authHeader =
+      req.headers.get("authorization") || req.headers.get("Authorization");
 
-  if (sessErr || !session) {
-    return { ok: false, status: 401, error: "Unauthenticated" as const };
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice("Bearer ".length).trim();
+
+      if (token) {
+        const {
+          data: { user },
+          error,
+        } = await supabaseAdmin.auth.getUser(token);
+
+        if (!error && user) {
+          userId = user.id;
+        }
+      }
+    }
+
+    // 2) Fallback cookie/session
+    if (!userId) {
+      const supabase = await getRouteClient();
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+
+      if (!error && user) {
+        userId = user.id;
+      }
+    }
+
+    if (!userId) {
+      return { ok: false, status: 401, error: "Unauthenticated" };
+    }
+
+    // 3) Check role bằng admin client để không vướng RLS
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      return {
+        ok: false,
+        status: 403,
+        error: "No profile / forbidden",
+        detail: profileError?.message || null,
+      };
+    }
+
+    const role = String((profile as any).role || "").trim().toLowerCase();
+    if (role !== "admin") {
+      return {
+        ok: false,
+        status: 403,
+        error: "Admin only",
+        detail: { role },
+      };
+    }
+
+    return { ok: true, user_id: userId };
+  } catch (e: any) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Unauthenticated",
+      detail: e?.message || null,
+    };
   }
-
-  const userId = session.user.id;
-
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("id, role")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (error || !profile) {
-    return { ok: false, status: 403, error: "No profile / forbidden" as const };
-  }
-
-  const role = (profile as any).role || null;
-
-  const isAdmin =
-    ["admin"].includes(String(role || ""));
-  
-  if (!isAdmin) return { ok: false, status: 403, error: "Admin only" as const };
-
-  return { ok: true, user_id: userId };
 }
 
 type Body = {
   book_id?: string;
-
-  // client đã upload thẳng lên Storage bucket "books", API chỉ cần nhận path
   storage_path?: string;
-
-  // optional metadata để lưu vào books
   mime_type?: string | null;
   file_size?: number | null;
   checksum_sha256?: string | null;
 };
 
 export async function POST(req: NextRequest) {
-  // ✅ admin-only
   const adminCheck = await requireAdmin(req);
   if (!adminCheck.ok) {
-    return json({ error: adminCheck.error }, { status: adminCheck.status });
+    return json(
+      { error: adminCheck.error, detail: adminCheck.detail ?? null },
+      { status: adminCheck.status }
+    );
   }
 
   const supabaseAdmin = getSupabaseAdmin();
 
   try {
-    // ✅ nhận JSON, không nhận multipart nữa
     const body = (await req.json().catch(() => ({}))) as Body;
 
     const book_id = String(body.book_id || "").trim();
     const storage_path = String(body.storage_path || "").trim();
 
-    if (!book_id) return json({ error: "Missing book_id" }, { status: 400 });
-    if (!storage_path) return json({ error: "Missing storage_path" }, { status: 400 });
+    if (!book_id) {
+      return json({ error: "Missing book_id" }, { status: 400 });
+    }
 
-    // Load book để chắc book tồn tại
+    if (!storage_path) {
+      return json({ error: "Missing storage_path" }, { status: 400 });
+    }
+
+    // Check book tồn tại
     const { data: book, error: bookErr } = await supabaseAdmin
       .from("books")
       .select("id, title")
@@ -95,24 +141,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // (tuỳ chọn) kiểm tra object có tồn tại trong storage không
-    // Nếu không muốn check (cho nhanh) thì có thể bỏ đoạn này.
-    const head = await supabaseAdmin.storage.from(BOOKS_BUCKET).list(
-      storage_path.split("/").slice(0, -1).join("/") || "",
-      { search: storage_path.split("/").pop() || "" }
-    );
-    if (head.error) {
-      return json(
-        { error: "Storage check failed", detail: head.error.message },
-        { status: 400 }
-      );
-    }
-    // nếu list không ra file đúng tên, vẫn có thể là do prefix/list behavior;
-    // nên check mềm: nếu không tìm thấy thì báo warning chứ không chặn
+    // Check mềm xem object có trong bucket không
+    const folder = storage_path.split("/").slice(0, -1).join("/") || "";
     const fileName = storage_path.split("/").pop() || "";
-    const found = (head.data || []).some((it: any) => it?.name === fileName);
 
-    // Update books record: lưu bucket/path + metadata file
+    let found = false;
+    let storageWarning: string | null = null;
+
+    if (fileName) {
+      const listRes = await supabaseAdmin.storage.from(BOOKS_BUCKET).list(folder, {
+        search: fileName,
+      });
+
+      if (listRes.error) {
+        storageWarning = `Storage check failed: ${listRes.error.message}`;
+      } else {
+        found = (listRes.data || []).some((it: any) => it?.name === fileName);
+        if (!found) {
+          storageWarning =
+            "Storage object not confirmed by list(); please verify path.";
+        }
+      }
+    }
+
     const { error: updErr } = await supabaseAdmin
       .from("books")
       .update({
@@ -137,9 +188,13 @@ export async function POST(req: NextRequest) {
       book_id,
       bucket: BOOKS_BUCKET,
       storage_path,
-      warning: found ? null : "Storage object not confirmed by list(); please verify path.",
+      warning: storageWarning,
+      object_confirmed: found,
     });
   } catch (e: any) {
-    return json({ error: e?.message || "Unknown error" }, { status: 500 });
+    return json(
+      { error: e?.message || "Unknown error" },
+      { status: 500 }
+    );
   }
 }
