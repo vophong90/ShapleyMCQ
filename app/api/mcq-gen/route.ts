@@ -133,12 +133,22 @@ ${misText}
 YÊU CẦU CHUNG:
 - Mỗi câu phải có ONE BEST ANSWER.
 - 4 lựa chọn A–D.
-- Distractors phải sinh ra từ chính các misconceptions ở trên (hoặc biến thể hợp lý của chúng).
-- Không sử dụng wording giống hệt đáp án đúng.
-- Không tạo distractor vô lý quá mức.
-- Không tạo distractor đúng một phần (không rõ đúng/sai).
 - Phù hợp chuẩn NBME Item Writing Guidelines.
 - Không dùng câu phủ định kiểu "KHÔNG phải", "TẤT CẢ NGOẠI TRỪ" nếu tránh được.
+YÊU CẦU VỀ STEM:
+- Stem phải chứa đủ dữ kiện để thí sinh suy luận ra đáp án đúng.
+- Nếu là câu lâm sàng, stem nên mô tả người bệnh, triệu chứng, dấu hiệu, bối cảnh, diễn tiến, kết quả khám hoặc cận lâm sàng cần thiết.
+- Không viết stem quá nghèo dữ kiện.
+- Stem phải chứa dữ kiện liên quan đến các distractors, tức là mỗi distractor phải có lý do khiến người học có thể bị hấp dẫn nếu mắc misconception tương ứng.
+- Đồng thời stem phải có dữ kiện phân biệt rõ để loại từng distractor.
+YÊU CẦU VỀ DISTRACTORS:
+- Distractors phải sinh ra từ chính misconceptions ở trên hoặc biến thể hợp lý.
+- Mỗi distractor phải phản ánh một lỗi tư duy cụ thể.
+- Mỗi distractor phải được hỗ trợ bởi ít nhất một dữ kiện trong stem, nhưng bị loại bởi một hoặc nhiều dữ kiện khác trong stem.
+- Không tạo distractor nếu stem không có dữ kiện nào làm lựa chọn đó có vẻ hợp lý.
+- Không tạo distractor vô lý quá mức.
+- Không tạo distractor đúng một phần hoặc gây tranh cãi.
+- Không dùng wording giống hệt giữa stem và đáp án đúng.
 
 ${vignetteHint}
 
@@ -252,6 +262,9 @@ Dưới đây là các câu MCQ đã được sinh ra (JSON). Nhiệm vụ của
 
 1) Rà soát TỪNG CÂU theo checklist:
    - Stem có rõ ràng, không mơ hồ, không lan man?
+   - Stem có đủ dữ kiện để thí sinh suy luận ra đáp án đúng?
+   - Stem phải chứa dữ kiện liên quan đến các distractors chưa?
+   - Stem có dữ kiện phân biệt rõ để loại từng distractor chưa?
    - Đúng yêu cầu ONE BEST ANSWER?
    - Độ dài stem có phù hợp yêu cầu "${stem_length || "medium"}" không?
    - Độ khó câu hỏi có phù hợp mức "${difficulty || "medium"}" không?
